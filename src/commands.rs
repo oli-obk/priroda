@@ -53,8 +53,10 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         }).collect();
         let print_local = |ty, ptr| {
             let ty = frame.map_or(ty, |frame| ecx.monomorphize(ty, frame.substs));
-            let (alloc, text, len) = print_ptr(ecx, ptr);
-            (ty.to_string(), alloc, text, len)
+            match print_ptr(ecx, ptr) {
+                Ok((alloc, text, len)) => (ty.to_string(), alloc, text, len),
+                Err(()) => (format!("{:?} does not exist", ptr), 0, String::new(), 0),
+            }
         };
         use rustc_data_structures::indexed_vec::Idx;
         let fn_args: Vec<(String, u64, String, usize)> = frame.map_or(Vec::new(), |&Frame { ref locals, var_offset, ref mir, .. }| {
@@ -225,7 +227,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 let (_, mem, bytes) = print_ptr(&self.ecx, Pointer {
                     alloc_id: ::miri::AllocId(alloc_id),
                     offset: offset,
-                });
+                }).unwrap_or((0, "unknown memory".to_string(), 0));
                 self.promise.resolve(Html(box_html!{ html {
                     head {
                         title { : format!("Allocation {}", alloc_id) }
@@ -246,7 +248,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
     }
 }
 
-fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> (u64, String, usize) {
+fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(u64, String, usize), ()> {
     match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr.alloc_id)) {
         (Ok(alloc), Err(_)) => {
             use std::fmt::Write;
@@ -274,13 +276,13 @@ fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> (u64, String, usize) {
                     i += 1;
                 }
             }
-            (ptr.alloc_id.0, s, alloc.bytes.len())
+            Ok((ptr.alloc_id.0, s, alloc.bytes.len()))
         },
         (Err(_), Ok(_)) => {
             // FIXME: print function name
-            (ptr.alloc_id.0, "function pointer".to_string(), 0)
+            Ok((ptr.alloc_id.0, "function pointer".to_string(), 0))
         },
-        (Err(_), Err(_)) => unreachable!(),
+        (Err(_), Err(_)) => Err(()),
         (Ok(_), Ok(_)) => unreachable!(),
     }
 }
