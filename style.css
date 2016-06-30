@@ -1,0 +1,109 @@
+#stack table tr td:nth-child(1) {
+  color: red;
+}
+
+#locals table {
+  border-collapse:collapse;
+  border: none;
+  font-family: monospace;
+}
+
+/* left top corner */
+#locals table tbody :first-child td {
+  border: none;
+}
+
+#locals table tr th {
+  background-color: lightgrey;
+}
+
+#locals {
+  float: right;
+  clear: both;
+}
+
+.vertical{
+  writing-mode:tb-rl;
+}
+
+#return_ptr {
+  display: inline-block;
+  border: 1px solid black;
+  float: right;
+  clear: both;
+}
+
+#commands {
+  display: inline-block;
+  border: 1px solid black;
+  position: fixed;
+  top: 50px;
+  z-index: 2;
+  background-color: white;
+  padding: 2px;
+}
+
+#commands > a {
+  text-decoration: none;
+}
+
+#commands > a > div {
+  padding: 5px 7px;
+  background: #4479BA;
+  color: #FFF;
+  -webkit-border-radius: 4px;
+  -moz-border-radius: 4px;
+  border-radius: 4px;
+  border: solid 1px #20538D;
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4);
+  -webkit-box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 1px rgba(0, 0, 0, 0.2);
+  -moz-box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 1px rgba(0, 0, 0, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 1px rgba(0, 0, 0, 0.2);
+  -webkit-transition-duration: 0.2s;
+  -moz-transition-duration: 0.2s;
+  transition-duration: 0.2s;
+  -webkit-user-select:none;
+  -moz-user-select:none;
+  -ms-user-select:none;
+  user-select:none;
+}
+#commands > a > div:hover {
+  background: #356094;
+  border: solid 1px #2A4E77;
+  text-decoration: none;
+}
+#commands > a > div:active {
+  -webkit-box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.6);
+  -moz-box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.6);
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.6);
+  background: #2E5481;
+  border: solid 1px #203E5F;
+}
+
+#stack {
+  float: right;
+}
+
+#stack table {
+  border: none;
+  border-collapse: collapse;
+}
+
+#stack table tr :first-child {
+  border: none;
+}
+
+td {
+  padding: 0px;
+}
+
+#mir {
+  position: absolute;
+  max-width: 1000px;
+  top: 100px;
+}
+
+#mir > svg {
+  height: auto;
+  max-width: 100%;
+}
