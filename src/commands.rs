@@ -191,12 +191,10 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             Some(Err(e)) => self.render_main_window(None, format!("not a number: {:?}", e)),
             Some(Ok(alloc_id)) => {
                 let allocs: Vec<_> = self.ecx.memory().allocations().filter_map(|(&id, alloc)| {
-                    for &reloc in alloc.relocations.values() {
-                        if reloc.0 == alloc_id {
-                            return Some(id)
-                        }
-                    }
-                    None
+                    alloc.relocations
+                         .values()
+                         .find(|reloc| reloc.0 == alloc_id)
+                         .map(|_| id)
                 }).collect();
                 self.promise.resolve(Html(box_html!{ html {
                     head {
