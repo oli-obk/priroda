@@ -96,11 +96,12 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             html {
                 head {
                     title { : filename }
+                    script(type="text/javascript") { : raw!(include_str!("../svg-pan-zoom/dist/svg-pan-zoom.js")) }
+                    script(type="text/javascript") { : raw!(include_str!("../zoom_mir.js")) }
                 }
-                body {
-                    style {
-                        : raw!(include_str!("../style.css"))
-                    }
+                body(onload="enable_mir_mousewheel()") {
+                    style { : raw!(include_str!("../style.css")) }
+                    style { : raw!(include_str!("../positioning.css")) }
                     div(id="commands") {
                         @ if is_active_stack_frame {
                             a(href="/step") { div(title="Execute next MIR statement/terminator") { : "Step" } }

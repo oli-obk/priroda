@@ -1,0 +1,39 @@
+#mir {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  height: 80%;
+  width: 50%;
+  border: 2px grey solid;
+}
+
+#mir > svg {
+  overflow: hidden;
+  display: inline;
+  width: 100%;
+  min-width: inherit;
+  max-width: inherit;
+  height: 100%;
+  min-height: inherit;
+  max-height: inherit;
+}
+
+#stack {
+  right: 0;
+  top: 0;
+  position: fixed;
+  height: 20%;
+  border: grey 2px solid;
+  overflow: auto;
+  width: 49%;
+}
+
+#locals {
+  right: 0;
+  top: 21%;
+  bottom: 0;
+  position: fixed;
+  border: grey 2px solid;
+  overflow: auto;
+  width: 49%;
+}
