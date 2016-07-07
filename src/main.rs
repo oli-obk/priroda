@@ -70,18 +70,20 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
             let mir = mir_map.map.get(&node_id).expect("no mir for main function");
             let def_id = tcx.map.local_def_id(node_id);
 
-            let mut ecx = EvalContext::new(tcx, mir_map);
+            let memory_size = 100*1024*1024; // 100MB
+            let stack_limit = 100;
+            let mut ecx = EvalContext::new(tcx, mir_map, memory_size, stack_limit);
             let substs = tcx.mk_substs(subst::Substs::empty());
-            let return_ptr = ecx.alloc_ret_ptr(mir.return_ty, substs).expect("main function should not be diverging");
+            let return_ptr = ecx.alloc_ret_ptr(mir.return_ty, substs).unwrap().expect("main function should not be diverging");
 
-            ecx.push_stack_frame(def_id, mir.span, CachedMir::Ref(mir), substs, Some(return_ptr));
+            ecx.push_stack_frame(def_id, mir.span, CachedMir::Ref(mir), substs, Some(return_ptr), None).unwrap();
 
             if mir.arg_decls.len() == 2 {
                 // start function
                 let ptr_size = ecx.memory().pointer_size();
-                let nargs = ecx.memory_mut().allocate(ptr_size);
+                let nargs = ecx.memory_mut().allocate(ptr_size, ptr_size).unwrap();
                 ecx.memory_mut().write_usize(nargs, 0).unwrap();
-                let args = ecx.memory_mut().allocate(ptr_size);
+                let args = ecx.memory_mut().allocate(ptr_size, ptr_size).unwrap();
                 ecx.memory_mut().write_usize(args, 0).unwrap();
                 ecx.frame_mut().locals[0] = nargs;
                 ecx.frame_mut().locals[1] = args;
