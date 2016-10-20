@@ -57,7 +57,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             (tcx.item_path_str(def_id), session.codemap().span_to_string(span))
         }).collect();
         use rustc_data_structures::indexed_vec::Idx;
-        let locals: Vec<(String, u64, String, usize)> = frame.map_or(Vec::new(), |&Frame { ref locals, ref mir, ref return_lvalue, ref substs, .. }| {
+        let locals: Vec<(String, Option<u64>, String, usize)> = frame.map_or(Vec::new(), |&Frame { ref locals, ref mir, ref return_lvalue, ref substs, .. }| {
             let ret_val = match *return_lvalue {
                 Lvalue::Ptr { ptr, extra: LvalueExtra::None } => Some(Value::ByRef(ptr)),
                 Lvalue::Local { frame, local } => ecx.stack()
@@ -71,8 +71,8 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 let ty = ecx.monomorphize(ty, substs);
                 match val.map(|value| print_value(ecx, value)) {
                     Some(Ok((alloc, text, len))) => (ty.to_string(), alloc, text, len),
-                    Some(Err(())) => (ty.to_string(), 0, format!("{:?} does not exist", val), 0),
-                    None => (ty.to_string(), 0, "uninitialized".to_owned(), 0),
+                    Some(Err(())) => (ty.to_string(), None, format!("{:?} does not exist", val), 0),
+                    None => (ty.to_string(), None, "uninitialized".to_owned(), 0),
                 }
             }).collect()
         });
@@ -162,7 +162,11 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                                     @if i != 0 {
                                         td { : format!("_{}", i) }
                                     }
-                                    td { : alloc.to_string() }
+                                    @if let Some(alloc) = alloc {
+                                        td { : alloc.to_string() }
+                                    } else {
+                                        td;
+                                    }
                                     td { : ty }
                                     td { : raw!(text) }
                                 }
@@ -224,7 +228,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 let (_, mem, bytes) = print_ptr(&self.ecx, Pointer {
                     alloc_id: ::miri::AllocId(alloc_id),
                     offset: offset,
-                }).unwrap_or((0, "unknown memory".to_string(), 0));
+                }).unwrap_or((None, "unknown memory".to_string(), 0));
                 self.promise.set(Html(box_html!{ html {
                     head {
                         title { : format!("Allocation {}", alloc_id) }
@@ -259,18 +263,18 @@ fn print_primval(val: PrimVal) -> String {
     }
 }
 
-fn print_value(ecx: &EvalContext, val: Value) -> Result<(u64, String, usize), ()> {
+fn print_value(ecx: &EvalContext, val: Value) -> Result<(Option<u64>, String, usize), ()> {
     let txt = match val {
         Value::ByRef(ptr) => return print_ptr(ecx, ptr),
         Value::ByVal(primval) => print_primval(primval),
         Value::ByValPair(val, extra) => format!("{}, {}", print_primval(val), print_primval(extra)),
     };
-    Ok((0, txt, 0))
+    Ok((None, txt, 0))
 }
 
-fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(u64, String, usize), ()> {
+fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, usize), ()> {
     if ptr.points_to_zst() || ptr == Pointer::never_ptr() {
-        return Ok((0, String::new(), 0));
+        return Ok((None, String::new(), 0));
     }
     match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr.alloc_id)) {
         (Ok(alloc), Err(_)) => {
@@ -299,11 +303,11 @@ fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(u64, String, usize), ()
                     i += 1;
                 }
             }
-            Ok((ptr.alloc_id.0, s, alloc.bytes.len()))
+            Ok((Some(ptr.alloc_id.0), s, alloc.bytes.len()))
         },
         (Err(_), Ok(_)) => {
             // FIXME: print function name
-            Ok((ptr.alloc_id.0, "function pointer".to_string(), 16))
+            Ok((None, "function pointer".to_string(), 16))
         },
         (Err(_), Err(_)) => Err(()),
         (Ok(_), Ok(_)) => unreachable!(),
