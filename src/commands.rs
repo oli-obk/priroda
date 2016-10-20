@@ -1,4 +1,4 @@
-use future::Promise;
+use promising_future::Promise;
 use super::Page;
 use super::Page::*;
 
@@ -6,6 +6,10 @@ use miri::{
     EvalContext,
     Frame,
     Pointer,
+    Value,
+    Lvalue,
+    LvalueExtra,
+    PrimVal,
 };
 
 use rustc::session::Session;
@@ -13,6 +17,7 @@ use rustc::ty::TyCtxt;
 use rustc::mir::repr as mir;
 
 use std::borrow::Cow;
+use std::iter;
 
 pub(crate) struct Renderer<'a, 'tcx: 'a> {
     pub promise: Promise<Page>,
@@ -51,29 +56,36 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         let stack: Vec<(String, String)> = ecx.stack().iter().map(|&Frame { def_id, span, .. } | {
             (tcx.item_path_str(def_id), session.codemap().span_to_string(span))
         }).collect();
-        let print_local = |ty, ptr| {
-            let ty = frame.map_or(ty, |frame| ecx.monomorphize(ty, frame.substs));
-            match print_ptr(ecx, ptr) {
-                Ok((alloc, text, len)) => (ty.to_string(), alloc, text, len),
-                Err(()) => (format!("{:?} does not exist", ptr), 0, String::new(), 0),
-            }
-        };
         use rustc_data_structures::indexed_vec::Idx;
-        let fn_args: Vec<(String, u64, String, usize)> = frame.map_or(Vec::new(), |&Frame { ref locals, var_offset, ref mir, .. }| {
-            locals[..var_offset].iter().enumerate().map(|(id, &ptr)| print_local(mir.arg_decls[mir::Arg::new(id)].ty, ptr)).collect()
+        let locals: Vec<(String, u64, String, usize)> = frame.map_or(Vec::new(), |&Frame { ref locals, ref mir, ref return_lvalue, ref substs, .. }| {
+            let ret_val = match *return_lvalue {
+                Lvalue::Ptr { ptr, extra: LvalueExtra::None } => Some(Value::ByRef(ptr)),
+                Lvalue::Local { frame, local } => ecx.stack()
+                                                     .get(frame)
+                                                     .expect("Lvalue::Local to nonexistant stack frame")
+                                                     .get_local(local),
+                Lvalue::Ptr { extra, .. } => panic!("bad return_lvalue Lvalue::Ptr, extra: {:?}", extra),
+            };
+            iter::once(&ret_val).chain(locals.iter()).enumerate().map(|(id, &val)| {
+                let ty = mir.local_decls[mir::Local::new(id)].ty;
+                let ty = ecx.monomorphize(ty, substs);
+                match val.map(|value| print_value(ecx, value)) {
+                    Some(Ok((alloc, text, len))) => (ty.to_string(), alloc, text, len),
+                    Some(Err(())) => (ty.to_string(), 0, format!("{:?} does not exist", val), 0),
+                    None => (ty.to_string(), 0, "uninitialized".to_owned(), 0),
+                }
+            }).collect()
         });
-        let fn_vars: Vec<(String, u64, String, usize)> = frame.map_or(Vec::new(), |&Frame { ref locals, var_offset, temp_offset, ref mir, .. }| {
-            locals[var_offset..temp_offset].iter().enumerate().map(|(id, &ptr)| print_local(mir.var_decls[mir::Var::new(id)].ty, ptr)).collect()
-        });
-        let fn_temps: Vec<(String, u64, String, usize)> = frame.map_or(Vec::new(), |&Frame { ref locals, temp_offset, ref mir, .. }| {
-            locals[temp_offset..].iter().enumerate().map(|(id, &ptr)| print_local(mir.temp_decls[mir::Temp::new(id)].ty, ptr)).collect()
-        });
-        let return_ptr = frame.and_then(|frame| frame.mir.return_ty.maybe_converging().map(|ty| print_local(ty, frame.return_ptr.unwrap())));
+        let (arg_count, var_count, tmp_count) = frame.map_or((0, 0, 0), |&Frame { ref mir, .. }| (
+            mir.args_iter().count(),
+            mir.vars_iter().count(),
+            mir.temps_iter().count(),
+        ));
 
         let mir_graph = frame.map(|frame| {
             let mut mir_graphviz = String::new();
             super::graphviz::write(&frame.mir, &mut mir_graphviz).unwrap();
-            String::from_utf8(::cgraph::Graph::from(mir_graphviz).render_dot().unwrap()).unwrap()
+            String::from_utf8(::cgraph::Graph::parse(mir_graphviz).unwrap().render_dot().unwrap()).unwrap()
         });
         let (bb, stmt) = frame.map_or((0, 0), |frame| {
             let blck = &frame.mir.basic_blocks()[frame.block];
@@ -92,7 +104,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 },
             )
         });
-        promise.resolve(Html(box_html! {
+        promise.set(Html(box_html! {
             html {
                 head {
                     title { : filename }
@@ -136,34 +148,20 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                                 th { : "type" }
                                 th { : "memory" }
                             }
-                            @ if let Some((ty, alloc, text, _)) = return_ptr { tr {
-                                td(colspan=2) { : "Return" }
-                                td { : alloc.to_string() }
-                                td { : ty }
-                                td { : raw!(text) }
-                            } }
-                            @ for (i, &(ref ty, alloc, ref text, _)) in fn_args.iter().enumerate() {
+                            @ for (i, &(ref ty, alloc, ref text, _)) in locals.iter().enumerate() {
                                 tr {
-                                    @if i == 0 { th(rowspan=fn_args.len().to_string()) { span(class="vertical") { : "Arguments" } } }
-                                    td { : format!("arg{}", i) }
-                                    td { : alloc.to_string() }
-                                    td { : ty }
-                                    td { : raw!(text) }
-                                }
-                            }
-                            @ for (i, &(ref ty, alloc, ref text, _)) in fn_vars.iter().enumerate() {
-                                tr {
-                                    @if i == 0 { th(rowspan=fn_vars.len().to_string()) { span(class="vertical") { : "Variables" } } }
-                                    td { : format!("var{}", i) }
-                                    td { : alloc.to_string() }
-                                    td { : ty }
-                                    td { : raw!(text) }
-                                }
-                            }
-                            @ for (i, &(ref ty, alloc, ref text, _)) in fn_temps.iter().enumerate() {
-                                tr {
-                                    @if i == 0 { th(rowspan=fn_temps.len().to_string()) { span(class="vertical") { : "Temporaries" } } }
-                                    td { : format!("tmp{}", i) }
+                                    @if i == 0 {
+                                        th(colspan = 2) { : "Return" }
+                                    } else if i == 1 && arg_count != 0 {
+                                        th(rowspan=arg_count) { span(class="vertical") { : "Arguments" } }
+                                    } else if i == arg_count + 1 {
+                                        th(rowspan=var_count) { span(class="vertical") { : "Variables" } }
+                                    } else if i == var_count + arg_count + 1 {
+                                        th(rowspan=tmp_count) { span(class="vertical") { : "Temporaries" } }
+                                    }
+                                    @if i != 0 {
+                                        td { : format!("_{}", i) }
+                                    }
                                     td { : alloc.to_string() }
                                     td { : ty }
                                     td { : raw!(text) }
@@ -197,7 +195,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                          .find(|reloc| reloc.0 == alloc_id)
                          .map(|_| id)
                 }).collect();
-                self.promise.resolve(Html(box_html!{ html {
+                self.promise.set(Html(box_html!{ html {
                     head {
                         title { : format!("Allocations with pointers to Allocation {}", alloc_id) }
                         body {
@@ -227,7 +225,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                     alloc_id: ::miri::AllocId(alloc_id),
                     offset: offset,
                 }).unwrap_or((0, "unknown memory".to_string(), 0));
-                self.promise.resolve(Html(box_html!{ html {
+                self.promise.set(Html(box_html!{ html {
                     head {
                         title { : format!("Allocation {}", alloc_id) }
                         body {
@@ -247,7 +245,33 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
     }
 }
 
+fn print_primval(val: PrimVal) -> String {
+    use miri::PrimValKind::*;
+    match val.kind {
+        Ptr(alloc) => format!("<a href=\"/ptr/{}/{}\">Pointer</a>", alloc, val.bits),
+        FnPtr(_) => "function pointer".to_string(),
+        U8 | U16 | U32 | U64 => val.bits.to_string(),
+        I8 | I16 | I32 | I64 => (val.bits as i64).to_string(),
+        F32 => val.to_f32().to_string(),
+        F64 => val.to_f64().to_string(),
+        Bool => val.expect_bool("bad bool primval").to_string(),
+        Char => ::std::char::from_u32(val.bits as u32).expect("bad char primval").to_string(),
+    }
+}
+
+fn print_value(ecx: &EvalContext, val: Value) -> Result<(u64, String, usize), ()> {
+    let txt = match val {
+        Value::ByRef(ptr) => return print_ptr(ecx, ptr),
+        Value::ByVal(primval) => print_primval(primval),
+        Value::ByValPair(val, extra) => format!("{}, {}", print_primval(val), print_primval(extra)),
+    };
+    Ok((0, txt, 0))
+}
+
 fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(u64, String, usize), ()> {
+    if ptr.points_to_zst() || ptr == Pointer::never_ptr() {
+        return Ok((0, String::new(), 0));
+    }
     match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr.alloc_id)) {
         (Ok(alloc), Err(_)) => {
             use std::fmt::Write;
@@ -279,7 +303,7 @@ fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(u64, String, usize), ()
         },
         (Err(_), Ok(_)) => {
             // FIXME: print function name
-            Ok((ptr.alloc_id.0, "function pointer".to_string(), 0))
+            Ok((ptr.alloc_id.0, "function pointer".to_string(), 16))
         },
         (Err(_), Err(_)) => Err(()),
         (Ok(_), Ok(_)) => unreachable!(),

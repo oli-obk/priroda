@@ -1,6 +1,7 @@
-#![feature(rustc_private, custom_attribute, question_mark)]
+#![feature(rustc_private, custom_attribute)]
 #![feature(pub_restricted)]
 #![allow(unused_attributes)]
+#![recursion_limit = "5000"]
 
 extern crate getopts;
 extern crate miri;
@@ -16,7 +17,7 @@ extern crate log;
 extern crate syntax;
 extern crate hyper;
 extern crate open;
-extern crate future;
+extern crate promising_future;
 #[macro_use]
 extern crate horrorshow;
 extern crate cgraph;
@@ -27,10 +28,14 @@ mod commands;
 use commands::Renderer;
 
 use horrorshow::prelude::*;
+use promising_future::future_promise;
 
 use miri::{
     EvalContext,
     CachedMir,
+    StackPopCleanup,
+    Lvalue,
+    Pointer,
 };
 
 use rustc::session::Session;
@@ -65,29 +70,25 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
             let mir_map = state.mir_map.unwrap();
 
             let (node_id, span) = state.session.entry_fn.borrow().expect("no main or start function found");
+            let def_id = tcx.map.local_def_id(node_id);
             debug!("found `main` function at: {:?}", span);
 
-            let mir = mir_map.map.get(&node_id).expect("no mir for main function");
+            let mir = mir_map.map.get(&def_id).expect("no mir for main function");
             let def_id = tcx.map.local_def_id(node_id);
 
             let memory_size = 100*1024*1024; // 100MB
             let stack_limit = 100;
             let mut ecx = EvalContext::new(tcx, mir_map, memory_size, stack_limit);
-            let substs = tcx.mk_substs(subst::Substs::empty());
-            let return_ptr = ecx.alloc_ret_ptr(mir.return_ty, substs).unwrap().expect("main function should not be diverging");
+            let substs = subst::Substs::empty(tcx);
 
-            ecx.push_stack_frame(def_id, mir.span, CachedMir::Ref(mir), substs, Some(return_ptr), None).unwrap();
-
-            if mir.arg_decls.len() == 2 {
-                // start function
-                let ptr_size = ecx.memory().pointer_size();
-                let nargs = ecx.memory_mut().allocate(ptr_size, ptr_size).unwrap();
-                ecx.memory_mut().write_usize(nargs, 0).unwrap();
-                let args = ecx.memory_mut().allocate(ptr_size, ptr_size).unwrap();
-                ecx.memory_mut().write_usize(args, 0).unwrap();
-                ecx.frame_mut().locals[0] = nargs;
-                ecx.frame_mut().locals[1] = args;
-            }
+            ecx.push_stack_frame(
+                def_id,
+                mir.span,
+                CachedMir::Ref(mir),
+                substs,
+                Lvalue::from_ptr(Pointer::zst_ptr()),
+                StackPopCleanup::None,
+            ).unwrap();
 
             act(ecx, state.session, tcx);
         });
@@ -112,11 +113,11 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
     let handle = std::thread::spawn(|| {
         server.handle(move |req: Request, mut res: Response| {
             if let RequestUri::AbsolutePath(path) = req.uri {
-                let (future, promise) = future::make_promise::<Page>();
+                let (future, promise) = future_promise::<Page>();
                 println!("got `{}`", path);
                 sender.lock().unwrap().send((path, promise)).unwrap();
-                match future.get() {
-                    Ok(Html(output)) => {
+                match future.value() {
+                    Some(Html(output)) => {
                         res.headers_mut().set(
                             TransferEncoding(vec![
                                 Encoding::Gzip,
@@ -128,13 +129,13 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
                         let output: Box<RenderBox> = output;
                         output.write_to_io(&mut res.start().unwrap()).unwrap();
                     }
-                    Ok(Ico) => {
+                    Some(Ico) => {
                         let ico = include_bytes!("../favicon.ico");
                         use hyper::mime::{Mime, TopLevel, SubLevel};
                         res.headers_mut().set(ContentType(Mime(TopLevel::Image, SubLevel::Ext("x-icon".to_string()), vec![])));
                         res.send(ico).unwrap()
                     }
-                    Err(_) => res.send(b"unable to process").unwrap(),
+                    None => res.send(b"unable to process").unwrap(),
                 }
             }
         }).expect("http server crashed");
@@ -169,7 +170,7 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
                     break;
                 }
             },
-            Some("favicon.ico") => promise.resolve(Ico),
+            Some("favicon.ico") => promise.set(Ico),
             Some("return") => {
                 let frame = ecx.stack().len();
                 fn is_ret(ecx: &EvalContext) -> bool {
@@ -242,7 +243,7 @@ fn main() {
         args.push(find_sysroot());
     }
 
-    rustc_driver::run_compiler(&args, &mut MiriCompilerCalls);
+    rustc_driver::run_compiler(&args, &mut MiriCompilerCalls, None, None);
 }
 
 fn init_logger() {
