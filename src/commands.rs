@@ -7,8 +7,6 @@ use miri::{
     Frame,
     Pointer,
     Value,
-    Lvalue,
-    LvalueExtra,
     PrimVal,
 };
 
@@ -58,14 +56,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         }).collect();
         use rustc_data_structures::indexed_vec::Idx;
         let locals: Vec<(String, Option<u64>, String, usize)> = frame.map_or(Vec::new(), |&Frame { ref locals, ref mir, ref return_lvalue, ref substs, .. }| {
-            let ret_val = match *return_lvalue {
-                Lvalue::Ptr { ptr, extra: LvalueExtra::None } => Some(Value::ByRef(ptr)),
-                Lvalue::Local { frame, local } => ecx.stack()
-                                                     .get(frame)
-                                                     .expect("Lvalue::Local to nonexistant stack frame")
-                                                     .get_local(local),
-                Lvalue::Ptr { extra, .. } => panic!("bad return_lvalue Lvalue::Ptr, extra: {:?}", extra),
-            };
+            let ret_val = ecx.read_lvalue(*return_lvalue).ok();
             iter::once(&ret_val).chain(locals.iter()).enumerate().map(|(id, &val)| {
                 let ty = mir.local_decls[mir::Local::new(id)].ty;
                 let ty = ecx.monomorphize(ty, substs);
@@ -252,13 +243,13 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
 fn print_primval(val: PrimVal) -> String {
     use miri::PrimValKind::*;
     match val.kind {
-        Ptr(alloc) => format!("<a href=\"/ptr/{}/{}\">Pointer</a>", alloc, val.bits),
-        FnPtr(_) => "function pointer".to_string(),
+        Ptr => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = val.relocation.unwrap(), offset = val.bits),
+        FnPtr => "function pointer".to_string(),
         U8 | U16 | U32 | U64 => val.bits.to_string(),
         I8 | I16 | I32 | I64 => (val.bits as i64).to_string(),
         F32 => val.to_f32().to_string(),
         F64 => val.to_f64().to_string(),
-        Bool => val.expect_bool("bad bool primval").to_string(),
+        Bool => val.try_as_bool().expect("bad bool primval").to_string(),
         Char => ::std::char::from_u32(val.bits as u32).expect("bad char primval").to_string(),
     }
 }
