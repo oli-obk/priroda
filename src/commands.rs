@@ -136,8 +136,8 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                                 td(width="20px");
                                 th { : "id" }
                                 th { : "alloc" }
-                                th { : "type" }
                                 th { : "memory" }
+                                th { : "type" }
                             }
                             @ for (i, &(ref ty, alloc, ref text, _)) in locals.iter().enumerate() {
                                 tr {
@@ -158,8 +158,8 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                                     } else {
                                         td;
                                     }
-                                    td { : ty }
                                     td { : raw!(text) }
+                                    td { : ty }
                                 }
                             }
                         }
