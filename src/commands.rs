@@ -12,7 +12,7 @@ use miri::{
 
 use rustc::session::Session;
 use rustc::ty::TyCtxt;
-use rustc::mir::repr as mir;
+use rustc::mir;
 
 use std::borrow::Cow;
 use std::iter;

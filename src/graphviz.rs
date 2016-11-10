@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use dot;
-use rustc::mir::repr::*;
+use rustc::mir::*;
 use std::fmt::Debug;
 use std::fmt::{self, Write};
 

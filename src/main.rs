@@ -32,7 +32,6 @@ use promising_future::future_promise;
 
 use miri::{
     EvalContext,
-    CachedMir,
     StackPopCleanup,
     Lvalue,
     Pointer,
@@ -40,7 +39,7 @@ use miri::{
 
 use rustc::session::Session;
 use rustc_driver::{driver, CompilerCalls};
-use rustc::ty::{subst, TyCtxt};
+use rustc::ty::TyCtxt;
 
 use std::sync::Mutex;
 use hyper::server::{Server, Request, Response};
@@ -67,24 +66,23 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
         control.after_analysis.callback = Box::new(|state| {
             state.session.abort_if_errors();
             let tcx = state.tcx.unwrap();
-            let mir_map = state.mir_map.unwrap();
 
             let (node_id, span) = state.session.entry_fn.borrow().expect("no main or start function found");
             let def_id = tcx.map.local_def_id(node_id);
             debug!("found `main` function at: {:?}", span);
 
-            let mir = mir_map.map.get(&def_id).expect("no mir for main function");
+            let mir = tcx.item_mir(def_id);
             let def_id = tcx.map.local_def_id(node_id);
 
             let memory_size = 100*1024*1024; // 100MB
             let stack_limit = 100;
-            let mut ecx = EvalContext::new(tcx, mir_map, memory_size, stack_limit);
-            let substs = subst::Substs::empty(tcx);
+            let mut ecx = EvalContext::new(tcx, memory_size, stack_limit);
+            let substs = tcx.intern_substs(&[]);
 
             ecx.push_stack_frame(
                 def_id,
                 mir.span,
-                CachedMir::Ref(mir),
+                mir,
                 substs,
                 Lvalue::from_ptr(Pointer::zst_ptr()),
                 StackPopCleanup::None,
@@ -178,7 +176,7 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
                     let basic_block = &stack.mir.basic_blocks()[stack.block];
 
                     match basic_block.terminator().kind {
-                        rustc::mir::repr::TerminatorKind::Return => stack.stmt >= basic_block.statements.len(),
+                        rustc::mir::TerminatorKind::Return => stack.stmt >= basic_block.statements.len(),
                         _ => false,
                     }
                 }
