@@ -55,7 +55,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             (tcx.item_path_str(def_id), session.codemap().span_to_string(span))
         }).collect();
         use rustc_data_structures::indexed_vec::Idx;
-        let locals: Vec<(String, Option<u64>, String, usize)> = frame.map_or(Vec::new(), |&Frame { ref locals, ref mir, ref return_lvalue, ref substs, .. }| {
+        let locals: Vec<(String, Option<u64>, String, u64)> = frame.map_or(Vec::new(), |&Frame { ref locals, ref mir, ref return_lvalue, ref substs, .. }| {
             let ret_val = ecx.read_lvalue(*return_lvalue).ok();
             iter::once(&ret_val).chain(locals.iter()).enumerate().map(|(id, &val)| {
                 let ty = mir.local_decls[mir::Local::new(id)].ty;
@@ -209,7 +209,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
     pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
         self,
         alloc_id: Option<Result<u64, ERR>>,
-        offset: Option<Result<usize, ERR>>,
+        offset: Option<Result<u64, ERR>>,
     ) {
         match (alloc_id, offset) {
             (Some(Err(e)), _) |
@@ -225,7 +225,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                         title { : format!("Allocation {}", alloc_id) }
                         body {
                             span(style="font-family: monospace") {
-                                : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset, rest = bytes * 2 - offset - 1)
+                                : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = (bytes * 2 - offset - 1) as usize)
                             }
                             br;
                             span(style="font-family: monospace") { : raw!(mem) }
@@ -254,7 +254,7 @@ fn print_primval(val: PrimVal) -> String {
     }
 }
 
-fn print_value(ecx: &EvalContext, val: Value) -> Result<(Option<u64>, String, usize), ()> {
+fn print_value(ecx: &EvalContext, val: Value) -> Result<(Option<u64>, String, u64), ()> {
     let txt = match val {
         Value::ByRef(ptr) => return print_ptr(ecx, ptr),
         Value::ByVal(primval) => print_primval(primval),
@@ -263,7 +263,7 @@ fn print_value(ecx: &EvalContext, val: Value) -> Result<(Option<u64>, String, us
     Ok((None, txt, 0))
 }
 
-fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, usize), ()> {
+fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, u64), ()> {
     if ptr.points_to_zst() || ptr == Pointer::never_ptr() {
         return Ok((None, String::new(), 0));
     }
@@ -272,7 +272,7 @@ fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, us
             use std::fmt::Write;
             let mut s = String::new();
             let mut i = 0;
-            while i < alloc.bytes.len() {
+            while i < alloc.bytes.len() as u64 {
                 if let Some(&reloc) = alloc.relocations.get(&i) {
                     i += ecx.memory().pointer_size();
                     write!(&mut s,
@@ -280,11 +280,11 @@ fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, us
                         alloc = reloc,
                         offset = ptr.offset,
                         nil = "",
-                        wdt = ecx.memory().pointer_size() * 2 - 2,
+                        wdt = (ecx.memory().pointer_size() * 2 - 2) as usize,
                     ).unwrap();
                 } else {
                     if alloc.undef_mask.is_range_defined(i, i + 1) {
-                        write!(&mut s, "{:02x}", alloc.bytes[i]).unwrap();
+                        write!(&mut s, "{:02x}", alloc.bytes[i as usize] as usize).unwrap();
                     } else {
                         let ub_chars = ['∅','∆','∇','∓','∞','⊙','⊠','⊘','⊗','⊛','⊝','⊡','⊠'];
                         let c1 = (ptr.alloc_id.0 * 769 + i as u64 * 5689) as usize % ub_chars.len();
@@ -294,7 +294,7 @@ fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, us
                     i += 1;
                 }
             }
-            Ok((Some(ptr.alloc_id.0), s, alloc.bytes.len()))
+            Ok((Some(ptr.alloc_id.0), s, alloc.bytes.len() as u64))
         },
         (Err(_), Ok(_)) => {
             // FIXME: print function name

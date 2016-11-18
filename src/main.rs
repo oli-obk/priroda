@@ -76,7 +76,8 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
 
             let memory_size = 100*1024*1024; // 100MB
             let stack_limit = 100;
-            let mut ecx = EvalContext::new(tcx, memory_size, stack_limit);
+            let step_limit = 1000_000;
+            let mut ecx = EvalContext::new(tcx, memory_size, stack_limit, step_limit);
             let substs = tcx.intern_substs(&[]);
 
             ecx.push_stack_frame(
