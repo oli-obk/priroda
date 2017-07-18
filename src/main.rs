@@ -34,21 +34,20 @@ use miri::{
     EvalContext,
     StackPopCleanup,
     Lvalue,
-    Pointer,
+    MemoryPointer,
 };
 
 use rustc::session::Session;
 use rustc_driver::{driver, CompilerCalls};
-use rustc::ty::TyCtxt;
+use rustc::ty::{self, TyCtxt};
 
 use std::sync::Mutex;
 use hyper::server::{Server, Request, Response};
 use hyper::header::{TransferEncoding, Encoding, ContentType};
-use hyper::uri::RequestUri;
+use hyper::Uri;
 
 enum Page {
     Html(Box<RenderBox + Send>),
-    Ico,
 }
 
 use Page::*;
@@ -68,24 +67,23 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
             let tcx = state.tcx.unwrap();
 
             let (node_id, span) = state.session.entry_fn.borrow().expect("no main or start function found");
-            let def_id = tcx.map.local_def_id(node_id);
-            debug!("found `main` function at: {:?}", span);
+            let main_id = tcx.hir.local_def_id(node_id);
 
-            let mir = tcx.item_mir(def_id);
-            let def_id = tcx.map.local_def_id(node_id);
+            let main_instance = ty::Instance::mono(tcx, main_id);
 
             let memory_size = 100*1024*1024; // 100MB
             let stack_limit = 100;
             let step_limit = 1000_000;
             let mut ecx = EvalContext::new(tcx, memory_size, stack_limit, step_limit);
+            let main_mir = ecx.load_mir(main_instance.def)?;
             let substs = tcx.intern_substs(&[]);
 
             ecx.push_stack_frame(
-                def_id,
+                instance,
                 mir.span,
                 mir,
                 substs,
-                Lvalue::from_ptr(Pointer::zst_ptr()),
+                Lvalue::undef(),
                 StackPopCleanup::None,
             ).unwrap();
 
@@ -111,7 +109,8 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
     };
     let handle = std::thread::spawn(|| {
         server.handle(move |req: Request, mut res: Response| {
-            if let RequestUri::AbsolutePath(path) = req.uri {
+            if req.uri().is_absolute() {
+                let path = req.uri().path();
                 let (future, promise) = future_promise::<Page>();
                 println!("got `{}`", path);
                 sender.lock().unwrap().send((path, promise)).unwrap();
@@ -127,12 +126,6 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
                         // hack, because `Box<RenderBox+Send>` isn't the same as `Box<RenderBox>`
                         let output: Box<RenderBox> = output;
                         output.write_to_io(&mut res.start().unwrap()).unwrap();
-                    }
-                    Some(Ico) => {
-                        let ico = include_bytes!("../favicon.ico");
-                        use hyper::mime::{Mime, TopLevel, SubLevel};
-                        res.headers_mut().set(ContentType(Mime(TopLevel::Image, SubLevel::Ext("x-icon".to_string()), vec![])));
-                        res.send(ico).unwrap()
                     }
                     None => res.send(b"unable to process").unwrap(),
                 }
@@ -169,7 +162,6 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
                     break;
                 }
             },
-            Some("favicon.ico") => promise.set(Ico),
             Some("return") => {
                 let frame = ecx.stack().len();
                 fn is_ret(ecx: &EvalContext) -> bool {

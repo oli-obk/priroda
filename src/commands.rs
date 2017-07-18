@@ -5,11 +5,13 @@ use super::Page::*;
 use miri::{
     EvalContext,
     Frame,
-    Pointer,
+    MemoryPointer,
     Value,
     PrimVal,
+    Pointer,
 };
 
+use rustc::hir::map::definitions::DefPathData;
 use rustc::session::Session;
 use rustc::ty::TyCtxt;
 use rustc::mir;
@@ -50,16 +52,23 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             None => true,
         };
         let frame = display_frame.and_then(|frame| ecx.stack().get(frame)).or_else(|| ecx.stack().last());
-        let filename = session.local_crate_source_file.as_ref().map_or("no file name", |path| path.to_str().unwrap()).to_string();
-        let stack: Vec<(String, String)> = ecx.stack().iter().map(|&Frame { def_id, span, .. } | {
-            (tcx.item_path_str(def_id), session.codemap().span_to_string(span))
+        let filename = session.local_crate_source_file.clone().unwrap_or_else(|| "no file name".to_string());
+        let stack: Vec<(String, String)> = ecx.stack().iter().map(|&Frame { instance, span, .. } | {
+            (
+                if tcx.def_key(instance.def_id()).disambiguated_data.data == DefPathData::ClosureExpr {
+                    "inside call to closure".to_string()
+                } else {
+                    instance.to_string()
+                },
+                session.codemap().span_to_string(span),
+            )
         }).collect();
         use rustc_data_structures::indexed_vec::Idx;
-        let locals: Vec<(String, Option<u64>, String, u64)> = frame.map_or(Vec::new(), |&Frame { ref locals, ref mir, ref return_lvalue, ref substs, .. }| {
-            let ret_val = ecx.read_lvalue(*return_lvalue).ok();
+        let locals: Vec<(String, Option<u64>, String, u64)> = frame.map_or(Vec::new(), |&Frame { instance, ref locals, ref mir, ref return_lvalue, .. }| {
+            let ret_val = ecx.read_lvalue(*return_lvalue, mir.return_ty).ok();
             iter::once(&ret_val).chain(locals.iter()).enumerate().map(|(id, &val)| {
                 let ty = mir.local_decls[mir::Local::new(id)].ty;
-                let ty = ecx.monomorphize(ty, substs);
+                let ty = ecx.monomorphize(ty, instance.substs);
                 match val.map(|value| print_value(ecx, value)) {
                     Some(Ok((alloc, text, len))) => (ty.to_string(), alloc, text, len),
                     Some(Err(())) => (ty.to_string(), None, format!("{:?} does not exist", val), 0),
@@ -95,16 +104,17 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 },
             )
         });
+        use horrorshow::Raw;
         promise.set(Html(box_html! {
             html {
                 head {
                     title { : filename }
-                    script(type="text/javascript") { : raw!(include_str!("../svg-pan-zoom/dist/svg-pan-zoom.js")) }
-                    script(type="text/javascript") { : raw!(include_str!("../zoom_mir.js")) }
+                    script(type="text/javascript") { : Raw(include_str!("../svg-pan-zoom/dist/svg-pan-zoom.js")) }
+                    script(type="text/javascript") { : Raw(include_str!("../zoom_mir.js")) }
                 }
                 body(onload="enable_mir_mousewheel()") {
-                    style { : raw!(include_str!("../style.css")) }
-                    style { : raw!(include_str!("../positioning.css")) }
+                    style { : Raw(include_str!("../style.css")) }
+                    style { : Raw(include_str!("../positioning.css")) }
                     div(id="commands") {
                         @ if is_active_stack_frame {
                             a(href="/step") { div(title="Execute next MIR statement/terminator") { : "Step" } }
@@ -158,19 +168,19 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                                     } else {
                                         td;
                                     }
-                                    td { : raw!(text) }
+                                    td { : Raw(text) }
                                     td { : ty }
                                 }
                             }
                         }
                     }
                     div(id="mir") {
-                        style { : raw!{format!("
+                        style { : Raw(format!("
                             #node{} > text:nth-child({}) {{
                               fill: red;
                             }}
-                        ", bb, stmt)}}
-                        : raw!(mir_graph.unwrap_or("no current function".to_string()))
+                        ", bb, stmt))}
+                        : Raw(mir_graph.unwrap_or("no current function".to_string()))
                     }
                 }
             }
@@ -211,12 +221,13 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         alloc_id: Option<Result<u64, ERR>>,
         offset: Option<Result<u64, ERR>>,
     ) {
+        use horrorshow::Raw;
         match (alloc_id, offset) {
             (Some(Err(e)), _) |
             (_, Some(Err(e))) => self.render_main_window(None, format!("not a number: {:?}", e)),
             (Some(Ok(alloc_id)), offset) => {
                 let offset = offset.unwrap_or(Ok(0)).expect("already checked in previous arm");
-                let (_, mem, bytes) = print_ptr(&self.ecx, Pointer {
+                let (_, mem, bytes) = print_ptr(&self.ecx, MemoryPointer {
                     alloc_id: ::miri::AllocId(alloc_id),
                     offset: offset,
                 }).unwrap_or((None, "unknown memory".to_string(), 0));
@@ -228,7 +239,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                                 : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = (bytes * 2 - offset - 1) as usize)
                             }
                             br;
-                            span(style="font-family: monospace") { : raw!(mem) }
+                            span(style="font-family: monospace") { : Raw(mem) }
                             br;
                             a(href=format!("/reverse_ptr/{}", alloc_id)) { : "List allocations with pointers into this allocation" }
                         }
@@ -241,22 +252,17 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
 }
 
 fn print_primval(val: PrimVal) -> String {
-    use miri::PrimValKind::*;
-    match val.kind {
-        Ptr => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = val.relocation.unwrap(), offset = val.bits),
-        FnPtr => "function pointer".to_string(),
-        U8 | U16 | U32 | U64 => val.bits.to_string(),
-        I8 | I16 | I32 | I64 => (val.bits as i64).to_string(),
-        F32 => val.to_f32().to_string(),
-        F64 => val.to_f64().to_string(),
-        Bool => val.try_as_bool().expect("bad bool primval").to_string(),
-        Char => ::std::char::from_u32(val.bits as u32).expect("bad char primval").to_string(),
+    match val {
+        PrimVal::Undef => "undef".to_string(),
+        PrimVal::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id, offset = ptr.offset),
+        // FIXME: print prettier depending on type
+        PrimVal::Bytes(bytes) => bytes.to_string(),
     }
 }
 
 fn print_value(ecx: &EvalContext, val: Value) -> Result<(Option<u64>, String, u64), ()> {
     let txt = match val {
-        Value::ByRef(ptr) => return print_ptr(ecx, ptr),
+        Value::ByRef(ptr, _) => return print_ptr(ecx, ptr),
         Value::ByVal(primval) => print_primval(primval),
         Value::ByValPair(val, extra) => format!("{}, {}", print_primval(val), print_primval(extra)),
     };
@@ -264,10 +270,7 @@ fn print_value(ecx: &EvalContext, val: Value) -> Result<(Option<u64>, String, u6
 }
 
 fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, u64), ()> {
-    if ptr.points_to_zst() || ptr == Pointer::never_ptr() {
-        return Ok((None, String::new(), 0));
-    }
-    match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr.alloc_id)) {
+    match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr)) {
         (Ok(alloc), Err(_)) => {
             use std::fmt::Write;
             let mut s = String::new();
