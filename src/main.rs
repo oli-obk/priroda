@@ -1,5 +1,5 @@
 #![feature(rustc_private, custom_attribute)]
-#![feature(pub_restricted)]
+#![feature(i128_type)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
 
@@ -12,10 +12,10 @@ extern crate rustc_data_structures;
 extern crate graphviz as dot;
 extern crate env_logger;
 extern crate log_settings;
-#[macro_use]
 extern crate log;
 extern crate syntax;
 extern crate hyper;
+extern crate futures;
 extern crate open;
 extern crate promising_future;
 #[macro_use]
@@ -34,17 +34,16 @@ use miri::{
     EvalContext,
     StackPopCleanup,
     Lvalue,
-    MemoryPointer,
 };
 
 use rustc::session::Session;
 use rustc_driver::{driver, CompilerCalls};
 use rustc::ty::{self, TyCtxt};
+use syntax::ast::{MetaItemKind, NestedMetaItemKind};
 
 use std::sync::Mutex;
-use hyper::server::{Server, Request, Response};
-use hyper::header::{TransferEncoding, Encoding, ContentType};
-use hyper::Uri;
+use hyper::server::{Request, Response};
+use futures::future::FutureResult;
 
 enum Page {
     Html(Box<RenderBox + Send>),
@@ -71,18 +70,14 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
 
             let main_instance = ty::Instance::mono(tcx, main_id);
 
-            let memory_size = 100*1024*1024; // 100MB
-            let stack_limit = 100;
-            let step_limit = 1000_000;
-            let mut ecx = EvalContext::new(tcx, memory_size, stack_limit, step_limit);
-            let main_mir = ecx.load_mir(main_instance.def)?;
-            let substs = tcx.intern_substs(&[]);
+            let limits = resource_limits_from_attributes(state);
+            let mut ecx = EvalContext::new(tcx, limits);
+            let main_mir = ecx.load_mir(main_instance.def).expect("mir for `main` not found");
 
             ecx.push_stack_frame(
-                instance,
-                mir.span,
-                mir,
-                substs,
+                main_instance,
+                span,
+                main_mir,
                 Lvalue::undef(),
                 StackPopCleanup::None,
             ).unwrap();
@@ -97,40 +92,19 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
 fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
-    // weird hack to make sure the closure passed to the server doesn't consume the sender
     let sender = Mutex::new(sender);
 
-    // setup server
-    let addr = "localhost:54321";
-    let server = Server::http(addr).expect("could not create http server");
-    let addr = format!("http://{}", addr);
-    if open::that(&addr).is_err() {
-        println!("open {} in your browser", addr);
-    };
     let handle = std::thread::spawn(|| {
-        server.handle(move |req: Request, mut res: Response| {
-            if req.uri().is_absolute() {
-                let path = req.uri().path();
-                let (future, promise) = future_promise::<Page>();
-                println!("got `{}`", path);
-                sender.lock().unwrap().send((path, promise)).unwrap();
-                match future.value() {
-                    Some(Html(output)) => {
-                        res.headers_mut().set(
-                            TransferEncoding(vec![
-                                Encoding::Gzip,
-                                Encoding::Chunked,
-                            ])
-                        );
-                        res.headers_mut().set(ContentType::html());
-                        // hack, because `Box<RenderBox+Send>` isn't the same as `Box<RenderBox>`
-                        let output: Box<RenderBox> = output;
-                        output.write_to_io(&mut res.start().unwrap()).unwrap();
-                    }
-                    None => res.send(b"unable to process").unwrap(),
-                }
-            }
-        }).expect("http server crashed");
+        // setup server
+        let addr = "127.0.0.1:54321".parse().unwrap();
+        let server = hyper::server::Http::new().bind(&addr, move || {
+            Ok(Service(sender.lock().unwrap().clone()))
+        }).expect("could not create http server");
+        let addr = format!("http://{}", server.local_addr().unwrap());
+        if open::that(&addr).is_err() {
+            println!("open {} in your browser", addr);
+        };
+        server.run().unwrap()
     });
 
     // process commands
@@ -210,7 +184,69 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
     handle.join().unwrap();
 }
 
+struct Service(std::sync::mpsc::Sender<(String, promising_future::Promise<Page>)>);
 
+impl hyper::server::Service for Service {
+    type Request = Request;
+    type Response = Response;
+    type Error = hyper::Error;
+    type Future = FutureResult<Response, hyper::Error>;
+
+    fn call(&self, req: Request) -> Self::Future {
+        let (future, promise) = future_promise::<Page>();
+        self.0.send((req.path().to_string(), promise)).unwrap();
+        println!("got `{}`", req.path());
+        futures::future::ok(match future.value() {
+            Some(Html(output)) => {
+                println!("rendering page");
+                let mut text = Vec::new();
+                output.write_to_io(&mut text).unwrap();
+                println!("sending page");
+                Response::new()
+                    .with_header(hyper::header::ContentLength(text.len() as u64))
+                    .with_body(text)
+            }
+            None => Response::new()
+                    .with_status(hyper::StatusCode::NotFound)
+        })
+    }
+}
+
+fn resource_limits_from_attributes(state: &driver::CompileState) -> miri::ResourceLimits {
+    let mut limits = miri::ResourceLimits::default();
+    let krate = state.hir_crate.as_ref().unwrap();
+    let err_msg = "miri attributes need to be in the form `miri(key = value)`";
+    let extract_int = |lit: &syntax::ast::Lit| -> u128 {
+        match lit.node {
+            syntax::ast::LitKind::Int(i, _) => i,
+            _ => state.session.span_fatal(lit.span, "expected an integer literal"),
+        }
+    };
+
+    for attr in krate.attrs.iter().filter(|a| a.name().map_or(false, |n| n == "miri")) {
+        if let Some(items) = attr.meta_item_list() {
+            for item in items {
+                if let NestedMetaItemKind::MetaItem(ref inner) = item.node {
+                    if let MetaItemKind::NameValue(ref value) = inner.node {
+                        match &inner.name().as_str()[..] {
+                            "memory_size" => limits.memory_size = extract_int(value) as u64,
+                            "step_limit" => limits.step_limit = extract_int(value) as u64,
+                            "stack_limit" => limits.stack_limit = extract_int(value) as usize,
+                            _ => state.session.span_err(item.span, "unknown miri attribute"),
+                        }
+                    } else {
+                        state.session.span_err(inner.span, err_msg);
+                    }
+                } else {
+                    state.session.span_err(item.span, err_msg);
+                }
+            }
+        } else {
+            state.session.span_err(attr.span, err_msg);
+        }
+    }
+    limits
+}
 
 fn find_sysroot() -> String {
     // Taken from https://github.com/Manishearth/rust-clippy/pull/911.

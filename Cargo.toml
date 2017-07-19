@@ -12,6 +12,7 @@ log = "0.3.6"
 log_settings = "0.1.1"
 hyper = "0.11.1"
 open = "1.1.1"
+futures = "0.1.14"
 promising-future = "0.2"
 horrorshow = "0.6.2"
 cgraph = { git = "https://github.com/oli-obk/cgraph.git" }

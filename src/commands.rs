@@ -104,6 +104,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 },
             )
         });
+        println!("running horrorshow");
         use horrorshow::Raw;
         promise.set(Html(box_html! {
             html {
@@ -132,7 +133,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                         table(border="1") {
                             @ for (i, &(ref s, ref span)) in stack.iter().enumerate().rev() {
                                 tr {
-                                    @ if i == display_frame.unwrap_or(stack.len() - 1) { td { : "→" } } else { td; }
+                                    @ if i == display_frame.unwrap_or(stack.len() - 1) { td { : Raw("&#8594;") } } else { td; }
                                     td { : s }
                                     td { : span }
                                     @ if i == display_frame.unwrap_or(stack.len() - 1) { td; } else { td { a(href=format!("/frame/{}", i)) { : "View" } } }
@@ -230,7 +231,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 let (_, mem, bytes) = print_ptr(&self.ecx, MemoryPointer {
                     alloc_id: ::miri::AllocId(alloc_id),
                     offset: offset,
-                }).unwrap_or((None, "unknown memory".to_string(), 0));
+                }.into()).unwrap_or((None, "unknown memory".to_string(), 0));
                 self.promise.set(Html(box_html!{ html {
                     head {
                         title { : format!("Allocation {}", alloc_id) }
@@ -270,6 +271,7 @@ fn print_value(ecx: &EvalContext, val: Value) -> Result<(Option<u64>, String, u6
 }
 
 fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, u64), ()> {
+    let ptr = ptr.to_ptr().map_err(|_| ())?;
     match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr)) {
         (Ok(alloc), Err(_)) => {
             use std::fmt::Write;
