@@ -2,14 +2,14 @@
 name = "priroda"
 version = "0.1.0"
 dependencies = [
- "cgraph 0.1.0 (git+https://github.com/oli-obk/cgraph.git)",
+ "cgraph 0.1.0 (git+https://github.com/oli-obk/cgraph.git?rev=b65e460ee323b31dca55b5541141a6b73272e72a)",
  "env_logger 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "horrorshow 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper 0.11.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "log_settings 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "miri 0.1.0",
+ "miri 0.1.0 (git+https://github.com/solson/miri.git?rev=27c64479cd0e449634ef61bbf42dff42cfa1fc28)",
  "open 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "promising-future 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -68,7 +68,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "cgraph"
 version = "0.1.0"
-source = "git+https://github.com/oli-obk/cgraph.git#b65e460ee323b31dca55b5541141a6b73272e72a"
+source = "git+https://github.com/oli-obk/cgraph.git?rev=b65e460ee323b31dca55b5541141a6b73272e72a#b65e460ee323b31dca55b5541141a6b73272e72a"
 
 [[package]]
 name = "dtoa"
@@ -232,6 +232,7 @@ dependencies = [
 [[package]]
 name = "miri"
 version = "0.1.0"
+source = "git+https://github.com/solson/miri.git?rev=27c64479cd0e449634ef61bbf42dff42cfa1fc28#27c64479cd0e449634ef61bbf42dff42cfa1fc28"
 dependencies = [
  "byteorder 1.1.0 (git+https://github.com/BurntSushi/byteorder)",
  "cargo_metadata 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -537,7 +538,7 @@ dependencies = [
 "checksum bytes 0.4.4 (registry+https://github.com/rust-lang/crates.io-index)" = "8b24f16593f445422331a5eed46b72f7f171f910fead4f2ea8f17e727e9c5c14"
 "checksum cargo_metadata 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "be1057b8462184f634c3a208ee35b0f935cfd94b694b26deadccd98732088d7b"
 "checksum cfg-if 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d4c819a1287eb618df47cc647173c5c4c66ba19d888a6e50d605672aed3140de"
-"checksum cgraph 0.1.0 (git+https://github.com/oli-obk/cgraph.git)" = "<none>"
+"checksum cgraph 0.1.0 (git+https://github.com/oli-obk/cgraph.git?rev=b65e460ee323b31dca55b5541141a6b73272e72a)" = "<none>"
 "checksum dtoa 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "80c8b71fd71146990a9742fc06dcbbde19161a267e0ad4e572c35162f4578c90"
 "checksum env_logger 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)" = "15abd780e45b3ea4f76b4e9a26ff4843258dd8a3eed2775a0e7368c2e7936c2f"
 "checksum futures 0.1.14 (registry+https://github.com/rust-lang/crates.io-index)" = "4b63a4792d4f8f686defe3b39b92127fea6344de5d38202b2ee5a11bbbf29d6a"
@@ -558,6 +559,7 @@ dependencies = [
 "checksum mime 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "c5ca99d8a021c1687882fd68dca26e601ceff5c26571c7cb41cf4ed60d57cb2d"
 "checksum mio 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)" = "9e965267d4d58496fc4f740e9861118367f13570cadf66316ed2c3f2f14d87c7"
 "checksum miow 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "8c1f2f3b1cf331de6896aabf6e9d55dca90356cc9960cca7eaaf408a355ae919"
+"checksum miri 0.1.0 (git+https://github.com/solson/miri.git?rev=27c64479cd0e449634ef61bbf42dff42cfa1fc28)" = "<none>"
 "checksum net2 0.2.30 (registry+https://github.com/rust-lang/crates.io-index)" = "94101fd932816f97eb9a5116f6c1a11511a1fed7db21c5ccd823b2dc11abf566"
 "checksum num-traits 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)" = "99843c856d68d8b4313b03a17e33c4bb42ae8f6610ea81b28abe076ac721b9b0"
 "checksum num_cpus 1.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "aec53c34f2d0247c5ca5d32cca1478762f301740468ee9ee6dcb7a0dd7a0c584"
