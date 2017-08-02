@@ -31,10 +31,11 @@ use horrorshow::prelude::*;
 use promising_future::future_promise;
 
 use miri::{
-    EvalContext,
     StackPopCleanup,
     Lvalue,
 };
+
+type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, miri::Evaluator>;
 
 use rustc::session::Session;
 use rustc_driver::{driver, CompilerCalls};
@@ -71,7 +72,7 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
             let main_instance = ty::Instance::mono(tcx, main_id);
 
             let limits = resource_limits_from_attributes(state);
-            let mut ecx = EvalContext::new(tcx, limits);
+            let mut ecx = EvalContext::new(tcx, limits, Default::default(), Default::default());
             let main_mir = ecx.load_mir(main_instance.def).expect("mir for `main` not found");
 
             ecx.push_stack_frame(

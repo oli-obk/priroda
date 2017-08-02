@@ -1,15 +1,15 @@
 use promising_future::Promise;
-use super::Page;
+use super::{Page, EvalContext};
 use super::Page::*;
 
 use miri::{
-    EvalContext,
     Frame,
     MemoryPointer,
     Value,
     PrimVal,
     Pointer,
 };
+
 
 use rustc::hir::map::definitions::DefPathData;
 use rustc::session::Session;
@@ -65,7 +65,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         }).collect();
         use rustc_data_structures::indexed_vec::Idx;
         let locals: Vec<(String, Option<u64>, String, u64)> = frame.map_or(Vec::new(), |&Frame { instance, ref locals, ref mir, ref return_lvalue, .. }| {
-            let ret_val = ecx.read_lvalue(*return_lvalue, mir.return_ty).ok();
+            let ret_val = ecx.read_lvalue(*return_lvalue).ok();
             iter::once(&ret_val).chain(locals.iter()).enumerate().map(|(id, &val)| {
                 let ty = mir.local_decls[mir::Local::new(id)].ty;
                 let ty = ecx.monomorphize(ty, instance.substs);
@@ -110,6 +110,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             html {
                 head {
                     title { : filename }
+                    meta(charset = "UTF-8") {}
                     script(type="text/javascript") { : Raw(include_str!("../svg-pan-zoom/dist/svg-pan-zoom.js")) }
                     script(type="text/javascript") { : Raw(include_str!("../zoom_mir.js")) }
                 }
@@ -204,11 +205,12 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 self.promise.set(Html(box_html!{ html {
                     head {
                         title { : format!("Allocations with pointers to Allocation {}", alloc_id) }
-                        body {
-                            @for id in allocs {
-                                a(href=format!("/ptr/{}", id)) { : format!("Allocation {}", id) }
-                                br;
-                            }
+                        meta(charset = "UTF-8") {}
+                    }
+                    body {
+                        @for id in allocs {
+                            a(href=format!("/ptr/{}", id)) { : format!("Allocation {}", id) }
+                            br;
                         }
                     }
                 }}));
@@ -235,15 +237,16 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 self.promise.set(Html(box_html!{ html {
                     head {
                         title { : format!("Allocation {}", alloc_id) }
-                        body {
-                            span(style="font-family: monospace") {
-                                : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = (bytes * 2 - offset - 1) as usize)
-                            }
-                            br;
-                            span(style="font-family: monospace") { : Raw(mem) }
-                            br;
-                            a(href=format!("/reverse_ptr/{}", alloc_id)) { : "List allocations with pointers into this allocation" }
+                        meta(charset = "UTF-8") {}
+                    }
+                    body {
+                        span(style="font-family: monospace") {
+                            : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = (bytes * 2 - offset - 1) as usize)
                         }
+                        br;
+                        span(style="font-family: monospace") { : Raw(mem) }
+                        br;
+                        a(href=format!("/reverse_ptr/{}", alloc_id)) { : "List allocations with pointers into this allocation" }
                     }
                 }}));
             },
@@ -263,7 +266,7 @@ fn print_primval(val: PrimVal) -> String {
 
 fn print_value(ecx: &EvalContext, val: Value) -> Result<(Option<u64>, String, u64), ()> {
     let txt = match val {
-        Value::ByRef(ptr, _) => return print_ptr(ecx, ptr),
+        Value::ByRef { ptr, .. } => return print_ptr(ecx, ptr),
         Value::ByVal(primval) => print_primval(primval),
         Value::ByValPair(val, extra) => format!("{}, {}", print_primval(val), print_primval(extra)),
     };
