@@ -16,4 +16,4 @@ futures = "0.1.14"
 promising-future = "0.2"
 horrorshow = "0.6.2"
 cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "b65e460ee323b31dca55b5541141a6b73272e72a" }
-miri = { git = "https://github.com/solson/miri.git", rev = "27c64479cd0e449634ef61bbf42dff42cfa1fc28" }
+miri = { path = "miri" }
