@@ -196,10 +196,10 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         match alloc_id {
             Some(Err(e)) => self.render_main_window(None, format!("not a number: {:?}", e)),
             Some(Ok(alloc_id)) => {
-                let allocs: Vec<_> = self.ecx.memory().allocations().filter_map(|(&id, alloc)| {
+                let allocs: Vec<_> = self.ecx.memory().allocations().filter_map(|(id, alloc)| {
                     alloc.relocations
                          .values()
-                         .find(|reloc| reloc.0 == alloc_id)
+                         .find(|reloc| reloc.index() == alloc_id)
                          .map(|_| id)
                 }).collect();
                 self.promise.set(Html(box_html!{ html {
@@ -209,7 +209,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                     }
                     body {
                         @for id in allocs {
-                            a(href=format!("/ptr/{}", id)) { : format!("Allocation {}", id) }
+                            a(href=format!("/ptr/{}", id.index())) { : format!("Allocation {}", id) }
                             br;
                         }
                     }
@@ -231,7 +231,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             (Some(Ok(alloc_id)), offset) => {
                 let offset = offset.unwrap_or(Ok(0)).expect("already checked in previous arm");
                 let (_, mem, bytes) = print_ptr(&self.ecx, MemoryPointer {
-                    alloc_id: ::miri::AllocId(alloc_id),
+                    alloc_id: ::miri::AllocIdKind::Runtime(alloc_id).into_alloc_id(),
                     offset: offset,
                 }.into()).unwrap_or((None, "unknown memory".to_string(), 0));
                 self.promise.set(Html(box_html!{ html {
@@ -258,7 +258,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
 fn print_primval(val: PrimVal) -> String {
     match val {
         PrimVal::Undef => "undef".to_string(),
-        PrimVal::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id, offset = ptr.offset),
+        PrimVal::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id.index(), offset = ptr.offset),
         // FIXME: print prettier depending on type
         PrimVal::Bytes(bytes) => bytes.to_string(),
     }
@@ -266,7 +266,7 @@ fn print_primval(val: PrimVal) -> String {
 
 fn print_value(ecx: &EvalContext, val: Value) -> Result<(Option<u64>, String, u64), ()> {
     let txt = match val {
-        Value::ByRef { ptr, .. } => return print_ptr(ecx, ptr),
+        Value::ByRef(ptr) => return print_ptr(ecx, ptr.ptr),
         Value::ByVal(primval) => print_primval(primval),
         Value::ByValPair(val, extra) => format!("{}, {}", print_primval(val), print_primval(extra)),
     };
@@ -285,7 +285,7 @@ fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, u6
                     i += ecx.memory().pointer_size();
                     write!(&mut s,
                         "<a style=\"text-decoration: none\" href=\"/ptr/{alloc}/{offset}\">┠{nil:─<wdt$}┨</a>",
-                        alloc = reloc,
+                        alloc = reloc.index(),
                         offset = ptr.offset,
                         nil = "",
                         wdt = (ecx.memory().pointer_size() * 2 - 2) as usize,
@@ -295,14 +295,14 @@ fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, u6
                         write!(&mut s, "{:02x}", alloc.bytes[i as usize] as usize).unwrap();
                     } else {
                         let ub_chars = ['∅','∆','∇','∓','∞','⊙','⊠','⊘','⊗','⊛','⊝','⊡','⊠'];
-                        let c1 = (ptr.alloc_id.0 * 769 + i as u64 * 5689) as usize % ub_chars.len();
-                        let c2 = (ptr.alloc_id.0 * 997 + i as u64 * 7193) as usize % ub_chars.len();
+                        let c1 = (ptr.alloc_id.index() * 769 + i as u64 * 5689) as usize % ub_chars.len();
+                        let c2 = (ptr.alloc_id.index() * 997 + i as u64 * 7193) as usize % ub_chars.len();
                         write!(&mut s, "<mark>{}{}</mark>", ub_chars[c1], ub_chars[c2]).unwrap();
                     }
                     i += 1;
                 }
             }
-            Ok((Some(ptr.alloc_id.0), s, alloc.bytes.len() as u64))
+            Ok((Some(ptr.alloc_id.index()), s, alloc.bytes.len() as u64))
         },
         (Err(_), Ok(_)) => {
             // FIXME: print function name
