@@ -1,39 +1,33 @@
+#left, #right {
+  display: inline-block;
+  width: calc(50vw - 4px);
+  height: 100vh;
+  margin: 2px;
+  vertical-align: top;
+  overflow: scroll;
+}
+
 #mir {
-  position: fixed;
-  left: 0;
-  bottom: 0;
-  height: 80%;
-  width: 50%;
+  width: 100%;
+  height: calc(100% - 60px);
   border: 2px grey solid;
 }
 
 #mir > svg {
-  overflow: hidden;
-  display: inline;
+  display: block;
   width: 100%;
-  min-width: inherit;
-  max-width: inherit;
   height: 100%;
-  min-height: inherit;
-  max-height: inherit;
 }
 
 #stack {
-  right: 0;
-  top: 0;
-  position: fixed;
-  height: 20%;
   border: grey 2px solid;
   overflow: auto;
-  width: 49%;
+  margin: 2px 0;
+  padding: 2px;
 }
 
 #locals {
-  right: 0;
-  top: 21%;
-  bottom: 0;
-  position: fixed;
   border: grey 2px solid;
   overflow: auto;
-  width: 49%;
+  margin: 2px 0;
 }

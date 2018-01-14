@@ -8,6 +8,7 @@ use miri::{
     Value,
     PrimVal,
     Pointer,
+    AllocId,
 };
 
 
@@ -52,7 +53,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             None => true,
         };
         let frame = display_frame.and_then(|frame| ecx.stack().get(frame)).or_else(|| ecx.stack().last());
-        let filename = session.local_crate_source_file.clone().unwrap_or_else(|| "no file name".to_string());
+        let filename = session.local_crate_source_file.clone().unwrap_or_else(|| "no file name".to_string().into());
         let stack: Vec<(String, String)> = ecx.stack().iter().map(|&Frame { instance, span, .. } | {
             (
                 if tcx.def_key(instance.def_id()).disambiguated_data.data == DefPathData::ClosureExpr {
@@ -64,8 +65,8 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             )
         }).collect();
         use rustc_data_structures::indexed_vec::Idx;
-        let locals: Vec<(String, Option<u64>, String, u64)> = frame.map_or(Vec::new(), |&Frame { instance, ref locals, ref mir, ref return_lvalue, .. }| {
-            let ret_val = ecx.read_lvalue(*return_lvalue).ok();
+        let locals: Vec<(String, Option<u64>, String, u64)> = frame.map_or(Vec::new(), |&Frame { instance, ref locals, ref mir, ref return_place, .. }| {
+            let ret_val = ecx.read_place(*return_place).ok();
             iter::once(&ret_val).chain(locals.iter()).enumerate().map(|(id, &val)| {
                 let ty = mir.local_decls[mir::Local::new(id)].ty;
                 let ty = ecx.monomorphize(ty, instance.substs);
@@ -104,12 +105,43 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 },
             )
         });
+        let edge_colors = if let Some(ref frame) = frame {
+            let blck = &frame.mir.basic_blocks()[frame.block];
+            let (targets, unwind) = if frame.stmt == blck.statements.len() {
+                use rustc::mir::TerminatorKind::*;
+                match blck.terminator().kind {
+                    Goto { target } => (vec![target], None),
+                    SwitchInt { ref targets, .. } => (targets.to_vec(), None),
+                    Drop { target, unwind, .. } |
+                    DropAndReplace { target, unwind, .. } => (vec![target], unwind),
+                    Call { ref destination, cleanup, .. } => {
+                        if let Some((_, target)) = *destination {
+                            (vec![target], cleanup)
+                        } else {
+                            (vec![], cleanup)
+                        }
+                    }
+                    _ => (vec![], None),
+                }
+            } else {
+                (vec![], None)
+            };
+            format!("let edge_colors = {{{}}};",
+                targets.into_iter().map(|target|(frame.block, target, "green"))
+                    .chain(unwind.into_iter().map(|target|(frame.block, target, "red")))
+                    .map(|(from, to, color)| format!("'bb{}->bb{}':'{}'", from.index(), to.index(), color))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        } else {
+            "{}".to_string()
+        };
         println!("running horrorshow");
         use horrorshow::Raw;
         promise.set(Html(box_html! {
             html {
                 head {
-                    title { : filename }
+                    title { : filename.to_str().unwrap() }
                     meta(charset = "UTF-8") {}
                     script(type="text/javascript") { : Raw(include_str!("../svg-pan-zoom/dist/svg-pan-zoom.js")) }
                     script(type="text/javascript") { : Raw(include_str!("../zoom_mir.js")) }
@@ -117,72 +149,94 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 body(onload="enable_mir_mousewheel()") {
                     style { : Raw(include_str!("../style.css")) }
                     style { : Raw(include_str!("../positioning.css")) }
-                    div(id="commands") {
-                        @ if is_active_stack_frame {
-                            a(href="/step") { div(title="Execute next MIR statement/terminator") { : "Step" } }
-                            a(href="/next") { div(title="Run until after the next MIR statement/terminator") { : "Next" } }
-                            a(href="/return") { div(title="Run until the function returns") { : "Return" } }
-                            a(href="/continue") { div(title="Run until termination or breakpoint") { : "Continue" } }
-                        } else {
-                            a(href="/") { div(title="Go to active stack frame") { : "Go back to active stack frame" } }
+                    div(id="left") {
+                        div(id="commands") {
+                            @ if is_active_stack_frame {
+                                a(href="/step") { div(title="Execute next MIR statement/terminator") { : "Step" } }
+                                a(href="/next") { div(title="Run until after the next MIR statement/terminator") { : "Next" } }
+                                a(href="/return") { div(title="Run until the function returns") { : "Return" } }
+                                a(href="/continue") { div(title="Run until termination or breakpoint") { : "Continue" } }
+                            } else {
+                                a(href="/") { div(title="Go to active stack frame") { : "Go back to active stack frame" } }
+                            }
                         }
+                        div(id="messages") {
+                            p { : message }
+                        }
+                        div(id="mir") {
+                            style { : Raw(format!("
+                                #node{} > text:nth-child({}) {{
+                                fill: red;
+                                }}
+                                .edge-green > path, .edge-green > polygon, .edge-green > text {{
+                                    fill: green;
+                                    stroke: green;
+                                }}
+                                .edge-red > path, .edge-red > polygon, .edge-red > text {{
+                                    fill: red;
+                                    stroke: red;
+                                }}
+                                .edge > path {{
+                                    fill: none;
+                                }}
+                            ", bb, stmt))}
+                            : Raw(mir_graph.unwrap_or("no current function".to_string()))
+                        }
+                        script { : Raw(edge_colors + r##"
+                                for(let el of document.querySelectorAll("#mir > svg #graph0 .edge")) {
+                                    let title = el.querySelector("title").textContent;
+                                    if(title in edge_colors) {
+                                        el.classList.add("edge-" + edge_colors[title]);
+                                    }
+                                }"##) }
                     }
-                    div(id="messages") {
-                        p { : message }
-                    }
-                    div(id="stack") {
-                        table(border="1") {
-                            @ for (i, &(ref s, ref span)) in stack.iter().enumerate().rev() {
-                                tr {
-                                    @ if i == display_frame.unwrap_or(stack.len() - 1) { td { : Raw("&#8594;") } } else { td; }
-                                    td { : s }
-                                    td { : span }
-                                    @ if i == display_frame.unwrap_or(stack.len() - 1) { td; } else { td { a(href=format!("/frame/{}", i)) { : "View" } } }
+                    div(id="right") {
+                        div(id="stack") {
+                            table(border="1") {
+                                @ for (i, &(ref s, ref span)) in stack.iter().enumerate().rev() {
+                                    tr {
+                                        @ if i == display_frame.unwrap_or(stack.len() - 1) { td { : Raw("&#8594;") } } else { td; }
+                                        td { : s }
+                                        td { : span }
+                                        @ if i == display_frame.unwrap_or(stack.len() - 1) { td; } else { td { a(href=format!("/frame/{}", i)) { : "View" } } }
+                                    }
                                 }
                             }
                         }
-                    }
-                    div(id="locals") {
-                        table(border="1") {
-                            tr {
-                                td(width="20px");
-                                th { : "id" }
-                                th { : "alloc" }
-                                th { : "memory" }
-                                th { : "type" }
-                            }
-                            @ for (i, &(ref ty, alloc, ref text, _)) in locals.iter().enumerate() {
+                        div(id="locals") {
+                            table(border="1") {
                                 tr {
-                                    @if i == 0 {
-                                        th(colspan = 2) { : "Return" }
-                                    } else if i == 1 && arg_count != 0 {
-                                        th(rowspan=arg_count) { span(class="vertical") { : "Arguments" } }
-                                    } else if i == arg_count + 1 {
-                                        th(rowspan=var_count) { span(class="vertical") { : "Variables" } }
-                                    } else if i == var_count + arg_count + 1 {
-                                        th(rowspan=tmp_count) { span(class="vertical") { : "Temporaries" } }
+                                    td(width="20px");
+                                    th { : "id" }
+                                    th { : "alloc" }
+                                    th { : "memory" }
+                                    th { : "type" }
+                                }
+                                @ for (i, &(ref ty, alloc, ref text, _)) in locals.iter().enumerate() {
+                                    tr {
+                                        @if i == 0 {
+                                            th(colspan = 2) { : "Return" }
+                                        } else if i == 1 && arg_count != 0 {
+                                            th(rowspan=arg_count) { span(class="vertical") { : "Arguments" } }
+                                        } else if i == arg_count + 1 {
+                                            th(rowspan=var_count) { span(class="vertical") { : "Variables" } }
+                                        } else if i == var_count + arg_count + 1 {
+                                            th(rowspan=tmp_count) { span(class="vertical") { : "Temporaries" } }
+                                        }
+                                        @if i != 0 {
+                                            td { : format!("_{}", i) }
+                                        }
+                                        @if let Some(alloc) = alloc {
+                                            td { : alloc.to_string() }
+                                        } else {
+                                            td;
+                                        }
+                                        td { : Raw(text) }
+                                        td { : ty }
                                     }
-                                    @if i != 0 {
-                                        td { : format!("_{}", i) }
-                                    }
-                                    @if let Some(alloc) = alloc {
-                                        td { : alloc.to_string() }
-                                    } else {
-                                        td;
-                                    }
-                                    td { : Raw(text) }
-                                    td { : ty }
                                 }
                             }
                         }
-                    }
-                    div(id="mir") {
-                        style { : Raw(format!("
-                            #node{} > text:nth-child({}) {{
-                              fill: red;
-                            }}
-                        ", bb, stmt))}
-                        : Raw(mir_graph.unwrap_or("no current function".to_string()))
                     }
                 }
             }
@@ -199,7 +253,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 let allocs: Vec<_> = self.ecx.memory().allocations().filter_map(|(id, alloc)| {
                     alloc.relocations
                          .values()
-                         .find(|reloc| reloc.index() == alloc_id)
+                         .find(|reloc| reloc.0 == alloc_id)
                          .map(|_| id)
                 }).collect();
                 self.promise.set(Html(box_html!{ html {
@@ -209,7 +263,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                     }
                     body {
                         @for id in allocs {
-                            a(href=format!("/ptr/{}", id.index())) { : format!("Allocation {}", id) }
+                            a(href=format!("/ptr/{}", id.0)) { : format!("Allocation {}", id) }
                             br;
                         }
                     }
@@ -221,7 +275,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
 
     pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
         self,
-        alloc_id: Option<Result<u64, ERR>>,
+        alloc_id: Option<Result<AllocId, ERR>>,
         offset: Option<Result<u64, ERR>>,
     ) {
         use horrorshow::Raw;
@@ -231,7 +285,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             (Some(Ok(alloc_id)), offset) => {
                 let offset = offset.unwrap_or(Ok(0)).expect("already checked in previous arm");
                 let (_, mem, bytes) = print_ptr(&self.ecx, MemoryPointer {
-                    alloc_id: ::miri::AllocIdKind::Runtime(alloc_id).into_alloc_id(),
+                    alloc_id: alloc_id,
                     offset: offset,
                 }.into()).unwrap_or((None, "unknown memory".to_string(), 0));
                 self.promise.set(Html(box_html!{ html {
@@ -258,7 +312,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
 fn print_primval(val: PrimVal) -> String {
     match val {
         PrimVal::Undef => "undef".to_string(),
-        PrimVal::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id.index(), offset = ptr.offset),
+        PrimVal::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id.0, offset = ptr.offset),
         // FIXME: print prettier depending on type
         PrimVal::Bytes(bytes) => bytes.to_string(),
     }
@@ -266,7 +320,7 @@ fn print_primval(val: PrimVal) -> String {
 
 fn print_value(ecx: &EvalContext, val: Value) -> Result<(Option<u64>, String, u64), ()> {
     let txt = match val {
-        Value::ByRef(ptr) => return print_ptr(ecx, ptr.ptr),
+        Value::ByRef(ptr, _align) => return print_ptr(ecx, ptr),
         Value::ByVal(primval) => print_primval(primval),
         Value::ByValPair(val, extra) => format!("{}, {}", print_primval(val), print_primval(extra)),
     };
@@ -285,7 +339,7 @@ fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, u6
                     i += ecx.memory().pointer_size();
                     write!(&mut s,
                         "<a style=\"text-decoration: none\" href=\"/ptr/{alloc}/{offset}\">┠{nil:─<wdt$}┨</a>",
-                        alloc = reloc.index(),
+                        alloc = reloc.0,
                         offset = ptr.offset,
                         nil = "",
                         wdt = (ecx.memory().pointer_size() * 2 - 2) as usize,
@@ -295,14 +349,14 @@ fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, u6
                         write!(&mut s, "{:02x}", alloc.bytes[i as usize] as usize).unwrap();
                     } else {
                         let ub_chars = ['∅','∆','∇','∓','∞','⊙','⊠','⊘','⊗','⊛','⊝','⊡','⊠'];
-                        let c1 = (ptr.alloc_id.index() * 769 + i as u64 * 5689) as usize % ub_chars.len();
-                        let c2 = (ptr.alloc_id.index() * 997 + i as u64 * 7193) as usize % ub_chars.len();
+                        let c1 = (ptr.alloc_id.0 * 769 + i as u64 * 5689) as usize % ub_chars.len();
+                        let c2 = (ptr.alloc_id.0 * 997 + i as u64 * 7193) as usize % ub_chars.len();
                         write!(&mut s, "<mark>{}{}</mark>", ub_chars[c1], ub_chars[c2]).unwrap();
                     }
                     i += 1;
                 }
             }
-            Ok((Some(ptr.alloc_id.index()), s, alloc.bytes.len() as u64))
+            Ok((Some(ptr.alloc_id.0), s, alloc.bytes.len() as u64))
         },
         (Err(_), Ok(_)) => {
             // FIXME: print function name

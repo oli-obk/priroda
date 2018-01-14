@@ -1,3 +1,13 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0px;
+  height: 100vh;
+  overflow-y: hidden;
+}
+
 #stack table tr td:nth-child(1) {
   color: red;
 }
@@ -32,9 +42,6 @@
 
 #commands {
   display: inline-flex;
-  border: 1px solid black;
-  top: 0;
-  left: 0;
   background-color: white;
   padding: 2px;
 }

@@ -32,12 +32,17 @@ use promising_future::future_promise;
 
 use miri::{
     StackPopCleanup,
-    Lvalue,
+    Value,
+    PrimVal,
+    AllocId,
+    Place,
 };
 
-type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, miri::Evaluator>;
+type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, miri::Evaluator<'tcx>>;
 
 use rustc::session::Session;
+use rustc::ty::ParamEnv;
+use rustc::traits::Reveal;
 use rustc_driver::{driver, CompilerCalls};
 use rustc::ty::{self, TyCtxt};
 use syntax::ast::{MetaItemKind, NestedMetaItemKind};
@@ -72,14 +77,14 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
             let main_instance = ty::Instance::mono(tcx, main_id);
 
             let limits = resource_limits_from_attributes(state);
-            let mut ecx = EvalContext::new(tcx, limits, Default::default(), Default::default());
+            let mut ecx = EvalContext::new(tcx, ParamEnv::empty(Reveal::All), limits, Default::default(), Default::default());
             let main_mir = ecx.load_mir(main_instance.def).expect("mir for `main` not found");
 
             ecx.push_stack_frame(
                 main_instance,
                 span,
                 main_mir,
-                Lvalue::undef(),
+                Place::undef(),
                 StackPopCleanup::None,
             ).unwrap();
 
@@ -91,6 +96,59 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
 }
 
 fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
+    enum ShouldContinue {
+        Continue,
+        Stop,
+    }
+    fn step<F>(ecx: &mut EvalContext, continue_while: F) -> Option<String>
+        where F: Fn(&EvalContext) -> ShouldContinue {
+        let mut message = None;
+        loop {
+            if ecx.stack().len() <= 1 && is_ret(&ecx) {
+                break;
+            }
+            match ecx.step() {
+                Ok(true) => {
+                    if let Some(frame) = ecx.stack().last() {
+                        let blck = &frame.mir.basic_blocks()[frame.block];
+                        if frame.stmt != blck.statements.len() {
+                            use rustc::mir::StatementKind::*;
+                            match blck.statements[frame.stmt].kind {
+                                StorageLive(_) | StorageDead(_) => continue,
+                                _ => {}
+                            }
+                        }
+                    }
+                    if let ShouldContinue::Stop = continue_while(&*ecx) {
+                        break;
+                    }
+                }
+                Ok(false) => {
+                    message = Some("interpretation finished".to_string());
+                    break;
+                }
+                Err(e) => {
+                    message = Some(format!("{:?}", e));
+                    break;
+                }
+            }
+        }
+        message
+    }
+
+    fn is_ret(ecx: &EvalContext) -> bool {
+        if let Some(stack) = ecx.stack().last() {
+            let basic_block = &stack.mir.basic_blocks()[stack.block];
+
+            match basic_block.terminator().kind {
+                rustc::mir::TerminatorKind::Return => stack.stmt >= basic_block.statements.len(),
+                _ => false,
+            }
+        } else {
+            true
+        }
+    }
+
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
     let sender = Mutex::new(sender);
@@ -115,64 +173,34 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
         let mut matches = path[1..].split('/');
         match matches.next() {
             Some("") | None => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new()),
-            Some("step") => match ecx.step() {
-                Ok(true) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new()),
-                Ok(false) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, "interpretation finished".to_string()),
-                Err(e) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("{:?}", e)),
+            Some("step") => {
+                let message = step(&mut ecx, |_ecx| ShouldContinue::Stop).unwrap_or_else(||String::new());
+                Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message);
             },
             Some("next") => {
                 let frame = ecx.stack().len();
                 let stmt = ecx.stack().last().unwrap().stmt;
                 let block = ecx.stack().last().unwrap().block;
-                loop {
-                    match ecx.step() {
-                        Ok(true) => if ecx.stack().len() == frame && (block < ecx.stack().last().unwrap().block || stmt < ecx.stack().last().unwrap().stmt) {
-                            Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new());
-                        } else {
-                            continue;
-                        },
-                        Ok(false) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, "interpretation finished".to_string()),
-                        Err(e) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("{:?}", e)),
+                let message = step(&mut ecx, |ecx| {
+                    if ecx.stack().len() <= frame && (block < ecx.stack().last().unwrap().block || stmt < ecx.stack().last().unwrap().stmt) {
+                        ShouldContinue::Stop
+                    } else {
+                        ShouldContinue::Continue
                     }
-                    break;
-                }
+                });
+                Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message.unwrap_or_else(||String::new()));
             },
             Some("return") => {
                 let frame = ecx.stack().len();
-                fn is_ret(ecx: &EvalContext) -> bool {
-                    let stack = ecx.stack().last().unwrap();
-                    let basic_block = &stack.mir.basic_blocks()[stack.block];
-
-                    match basic_block.terminator().kind {
-                        rustc::mir::TerminatorKind::Return => stack.stmt >= basic_block.statements.len(),
-                        _ => false,
-                    }
-                }
-                loop {
-                    if ecx.stack().len() <= frame && is_ret(&ecx) {
-                        Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new());
-                        break;
-                    }
-                    match ecx.step() {
-                        Ok(true) => continue,
-                        Ok(false) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, "interpretation finished".to_string()),
-                        Err(e) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("{:?}", e)),
-                    }
-                    break;
-                }
+                let message = step(&mut ecx, |ecx| if ecx.stack().len() <= frame && is_ret(&ecx) { ShouldContinue::Stop } else { ShouldContinue::Continue });
+                Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message.unwrap_or_else(||String::new()));
             }
             Some("continue") => {
-                loop {
-                    match ecx.step() {
-                        Ok(true) => continue,
-                        Ok(false) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, "interpretation finished".to_string()),
-                        Err(e) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("{:?}", e)),
-                    }
-                    break;
-                }
+                let message = step(&mut ecx, |ecx| ShouldContinue::Continue);
+                Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message.unwrap_or_else(||String::new()));
             },
             Some("reverse_ptr") => Renderer::new(promise, &ecx, tcx, session).render_reverse_ptr(matches.next().map(str::parse)),
-            Some("ptr") => Renderer::new(promise, &ecx, tcx, session).render_ptr_memory(matches.next().map(str::parse), matches.next().map(str::parse)),
+            Some("ptr") => Renderer::new(promise, &ecx, tcx, session).render_ptr_memory(matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse)),
             Some("frame") => match matches.next().map(str::parse) {
                 Some(Ok(n)) => Renderer::new(promise, &ecx, tcx, session).render_main_window(Some(n), String::new()),
                 Some(Err(e)) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("not a number: {:?}", e)),
