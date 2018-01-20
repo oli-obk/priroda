@@ -14,7 +14,7 @@ use miri::{
 
 use rustc::hir::map::definitions::DefPathData;
 use rustc::session::Session;
-use rustc::ty::TyCtxt;
+use rustc::ty::{TyCtxt, Ty, TyS, TypeVariants, TypeAndMut};
 use rustc::mir;
 
 use std::borrow::Cow;
@@ -70,7 +70,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             iter::once(&ret_val).chain(locals.iter()).enumerate().map(|(id, &val)| {
                 let ty = mir.local_decls[mir::Local::new(id)].ty;
                 let ty = ecx.monomorphize(ty, instance.substs);
-                match val.map(|value| print_value(ecx, value)) {
+                match val.map(|value| print_value(ecx, ty, value)) {
                     Some(Ok((alloc, text, len))) => (ty.to_string(), alloc, text, len),
                     Some(Err(())) => (ty.to_string(), None, format!("{:?} does not exist", val), 0),
                     None => (ty.to_string(), None, "&lt;uninit&gt;".to_owned(), 0),
@@ -307,20 +307,78 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
     }
 }
 
-fn print_primval(val: PrimVal) -> String {
+fn print_primval(ty: Option<Ty>, val: PrimVal) -> String {
     match val {
         PrimVal::Undef => "&lt;undef &gt;".to_string(),
         PrimVal::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id.0, offset = ptr.offset),
-        // FIXME: print prettier depending on type
-        PrimVal::Bytes(bytes) => bytes.to_string(),
+        PrimVal::Bytes(bytes) => {
+            match ty {
+                Some(&TyS { sty: TypeVariants::TyBool, ..}) => {
+                    if bytes == 0 {
+                        return "false (0)".to_string()
+                    } else if bytes == 1 {
+                        return "true (1)".to_string()
+                    }
+                }
+                Some(&TyS { sty: TypeVariants::TyChar, ..}) => {
+                    if bytes < ::std::u32::MAX as u128 {
+                        let chr = ::std::char::from_u32(bytes as u32).unwrap();
+                        if chr.is_ascii() {
+                            return format!("'{}' (0x{:08X})", chr, bytes);
+                        }
+                    }
+                }
+                Some(&TyS { sty: TypeVariants::TyUint(_), ..}) => {
+                    return format!("{0} (0x{0:08X})", bytes);
+                }
+                Some(&TyS { sty: TypeVariants::TyInt(_), ..}) => {
+                    return format!("{0} (0x{0:08X})", bytes as i128);
+                }
+                Some(&TyS { sty: TypeVariants::TyFloat(float_ty), ..}) => {
+                    use syntax::ast::FloatTy::*;
+                    match float_ty {
+                        F32 => {
+                            if bytes < ::std::u32::MAX as u128 {
+                                return format!("{} (0x{:08X})", <f32>::from_bits(bytes as u32), bytes as u32);
+                            }
+                        }
+                        F64 => {
+                            if bytes < ::std::u64::MAX as u128 {
+                                return format!("{} (0x{:08X})", <f64>::from_bits(bytes as u64), bytes as u64);
+                            }
+                        }
+                    }
+                }
+                _ => {},
+            }
+            bytes.to_string()
+        },
     }
 }
 
-fn print_value(ecx: &EvalContext, val: Value) -> Result<(Option<u64>, String, u64), ()> {
+fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>, String, u64), ()> {
     let txt = match val {
         Value::ByRef(ptr, _align) => return print_ptr(ecx, ptr),
-        Value::ByVal(primval) => print_primval(primval),
-        Value::ByValPair(val, extra) => format!("{}, {}", print_primval(val), print_primval(extra)),
+        Value::ByVal(primval) => print_primval(Some(ty), primval),
+        Value::ByValPair(val, extra) => {
+            match ty.sty {
+                TypeVariants::TyRawPtr(TypeAndMut { ty: &TyS { sty: TypeVariants::TyStr, .. }, .. }) |
+                TypeVariants::TyRef(_, TypeAndMut { ty: &TyS { sty: TypeVariants::TyStr, .. }, .. }) => {
+                    if let (PrimVal::Ptr(ptr), PrimVal::Bytes(extra)) = (val, extra) {
+                        println!("{:?} ({})", ptr, extra);
+                        if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
+                            if (ptr.offset as u128) < allocation.bytes.len() as u128 {
+                                let bytes = &allocation.bytes[ptr.offset as usize..];
+                                let s = String::from_utf8_lossy(bytes);
+                                return Ok((None, format!("\"{}\" ({}, {})", s, print_primval(None, val), extra), 0));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            format!("{}, {}", print_primval(None, val), print_primval(None, extra))
+        },
     };
     Ok((None, txt, 0))
 }
