@@ -32,19 +32,26 @@ use promising_future::future_promise;
 
 use miri::{
     StackPopCleanup,
-    Value,
-    PrimVal,
     AllocId,
     Place,
 };
 
+fn should_hide_stmt(stmt: &Statement) -> bool {
+    use rustc::mir::StatementKind::*;
+    match stmt.kind {
+        StorageLive(_) | StorageDead(_) | Validate(_, _) | EndRegion(_) | Nop => true,
+        _ => false,
+    }
+}
+
 type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, miri::Evaluator<'tcx>>;
 
 use rustc::session::Session;
-use rustc::ty::ParamEnv;
+use rustc::ty::{self, TyCtxt, ParamEnv};
+use rustc::ty::layout::LayoutOf;
 use rustc::traits::Reveal;
+use rustc::mir::Statement;
 use rustc_driver::{driver, CompilerCalls};
-use rustc::ty::{self, TyCtxt};
 use syntax::ast::{MetaItemKind, NestedMetaItemKind};
 
 use std::sync::Mutex;
@@ -80,11 +87,14 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
             let mut ecx = EvalContext::new(tcx, ParamEnv::empty(Reveal::All), limits, Default::default(), Default::default());
             let main_mir = ecx.load_mir(main_instance.def).expect("mir for `main` not found");
 
+            let return_type = main_mir.return_ty();
+            let return_layout = (tcx, ParamEnv::empty(Reveal::All)).layout_of(return_type).expect("couldnt get layout for return pointer");
+            let return_ptr = ecx.memory.allocate(return_layout.size.bytes(), return_layout.align, None).unwrap();
             ecx.push_stack_frame(
                 main_instance,
                 span,
                 main_mir,
-                Place::undef(),
+                Place::from_ptr(return_ptr, return_layout.align),
                 StackPopCleanup::None,
             ).unwrap();
 
@@ -112,10 +122,8 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
                     if let Some(frame) = ecx.stack().last() {
                         let blck = &frame.mir.basic_blocks()[frame.block];
                         if frame.stmt != blck.statements.len() {
-                            use rustc::mir::StatementKind::*;
-                            match blck.statements[frame.stmt].kind {
-                                StorageLive(_) | StorageDead(_) => continue,
-                                _ => {}
+                            if should_hide_stmt(&blck.statements[frame.stmt]) {
+                                continue;
                             }
                         }
                     }
@@ -196,7 +204,7 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
                 Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message.unwrap_or_else(||String::new()));
             }
             Some("continue") => {
-                let message = step(&mut ecx, |ecx| ShouldContinue::Continue);
+                let message = step(&mut ecx, |_ecx| ShouldContinue::Continue);
                 Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message.unwrap_or_else(||String::new()));
             },
             Some("reverse_ptr") => Renderer::new(promise, &ecx, tcx, session).render_reverse_ptr(matches.next().map(str::parse)),

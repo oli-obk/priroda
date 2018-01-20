@@ -67,12 +67,12 @@ pub fn write_node_label<W: Write, INIT, FINI>(block: BasicBlock,
     // List of statements in the middle.
     if !data.statements.is_empty() {
         write!(w, r#"<tr><td align="left" balign="left">"#)?;
-        use rustc::mir::StatementKind::*;
         for statement in &data.statements {
-            match statement.kind {
-                StorageLive(_) | StorageDead(_) => write!(w, "&lt;+&gt;<br/>")?,
-                _ => write!(w, "{}<br/>", escape(statement))?,
-            };
+            if ::should_hide_stmt(statement) {
+                write!(w, "&lt;+&gt;<br/>")?;
+            } else {
+                write!(w, "{}<br/>", escape(statement))?;
+            }
         }
         write!(w, "</td></tr>")?;
     }

@@ -73,7 +73,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 match val.map(|value| print_value(ecx, value)) {
                     Some(Ok((alloc, text, len))) => (ty.to_string(), alloc, text, len),
                     Some(Err(())) => (ty.to_string(), None, format!("{:?} does not exist", val), 0),
-                    None => (ty.to_string(), None, "uninitialized".to_owned(), 0),
+                    None => (ty.to_string(), None, "&lt;uninit&gt;".to_owned(), 0),
                 }
             }).collect()
         });
@@ -215,7 +215,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                                 @ for (i, &(ref ty, alloc, ref text, _)) in locals.iter().enumerate() {
                                     tr {
                                         @if i == 0 {
-                                            th(colspan = 2) { : "Return" }
+                                            th(rowspan=1) { span(class="vertical") { : "Return" } }
                                         } else if i == 1 && arg_count != 0 {
                                             th(rowspan=arg_count) { span(class="vertical") { : "Arguments" } }
                                         } else if i == arg_count + 1 {
@@ -223,9 +223,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                                         } else if i == var_count + arg_count + 1 {
                                             th(rowspan=tmp_count) { span(class="vertical") { : "Temporaries" } }
                                         }
-                                        @if i != 0 {
-                                            td { : format!("_{}", i) }
-                                        }
+                                        td { : format!("_{}", i) }
                                         @if let Some(alloc) = alloc {
                                             td { : alloc.to_string() }
                                         } else {
@@ -311,7 +309,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
 
 fn print_primval(val: PrimVal) -> String {
     match val {
-        PrimVal::Undef => "undef".to_string(),
+        PrimVal::Undef => "&lt;undef &gt;".to_string(),
         PrimVal::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id.0, offset = ptr.offset),
         // FIXME: print prettier depending on type
         PrimVal::Bytes(bytes) => bytes.to_string(),
