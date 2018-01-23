@@ -17,17 +17,18 @@ use horrorshow::Template;
 use EvalContext;
 
 pub fn render_locals<'a, 'tcx: 'a>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, ecx: &EvalContext<'a, 'tcx>, frame: Option<&Frame<'tcx>>) -> String {
-    let locals: Vec<(String, Option<u64>, String, u64)> = frame.map_or(Vec::new(), |&Frame { instance, ref locals, ref mir, ref return_place, .. }| {
+    let locals: Vec<(usize, String, Option<u64>, String, &str)> = frame.map_or(Vec::new(), |&Frame { instance, ref locals, ref mir, ref return_place, .. }| {
         let ret_val = ecx.read_place(*return_place).ok();
-        ::std::iter::once(&ret_val).chain(locals.iter()).enumerate().map(|(id, &val)| {
-            let ty = mir.local_decls[mir::Local::new(id)].ty;
-            let ty = ecx.monomorphize(ty, instance.substs);
-            match val.map(|value| print_value(ecx, ty, value)) {
-                Some(Ok((alloc, text, len))) => (ty.to_string(), alloc, text, len),
-                Some(Err(())) => (ty.to_string(), None, format!("{:?} does not exist", val), 0),
-                None => (ty.to_string(), None, "&lt;uninit&gt;".to_owned(), 0),
-            }
-        }).collect()
+        ::std::iter::once(&ret_val).chain(locals.iter()).enumerate()
+            .map(|(id, &val)| {
+                let ty = mir.local_decls[mir::Local::new(id)].ty;
+                let ty = ecx.monomorphize(ty, instance.substs);
+                match val.map(|value| print_value(ecx, ty, value)) {
+                    Some(Ok((alloc, text))) => (id, ty.to_string(), alloc, text, ""),
+                    Some(Err(())) => (id, ty.to_string(), None, format!("{:?} does not exist", val), ""),
+                    None => (id, ty.to_string(), None, "&lt;uninit&gt;".to_owned(), "font-size: 0;"),
+                }
+            }).collect()
     });
 
     let (arg_count, var_count, tmp_count) = frame.map_or((0, 0, 0), |&Frame { ref mir, .. }| (
@@ -45,8 +46,8 @@ pub fn render_locals<'a, 'tcx: 'a>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, ecx: &EvalConte
                 th { : "memory" }
                 th { : "type" }
             }
-            @ for (i, &(ref ty, alloc, ref text, _)) in locals.iter().enumerate() {
-                tr {
+            @ for &(i, ref ty, alloc, ref text, ref style) in &locals {
+                tr(style=style) {
                     @if i == 0 {
                         th(rowspan=1) { span(class="vertical") { : "Return" } }
                     } else if i == 1 && arg_count != 0 {
@@ -119,9 +120,12 @@ pub fn print_primval(ty: Option<Ty>, val: PrimVal) -> String {
     }
 }
 
-pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>, String, u64), ()> {
+pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>, String), ()> {
     let txt = match val {
-        Value::ByRef(ptr, _align) => return print_ptr(ecx, ptr),
+        Value::ByRef(ptr, _align) => {
+            let (alloc, txt, _len) = print_ptr(ecx, ptr)?;
+            return Ok((alloc, txt));
+        },
         Value::ByVal(primval) => print_primval(Some(ty), primval),
         Value::ByValPair(val, extra) => {
             match ty.sty {
@@ -132,7 +136,7 @@ pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>
                             if (ptr.offset as u128) < allocation.bytes.len() as u128 {
                                 let bytes = &allocation.bytes[ptr.offset as usize..];
                                 let s = String::from_utf8_lossy(bytes);
-                                return Ok((None, format!("\"{}\" ({}, {})", s, print_primval(None, val), extra), 0));
+                                return Ok((None, format!("\"{}\" ({}, {})", s, print_primval(None, val), extra)));
                             }
                         }
                     }
@@ -142,7 +146,7 @@ pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>
             format!("{}, {}", print_primval(None, val), print_primval(None, extra))
         },
     };
-    Ok((None, txt, 0))
+    Ok((None, txt))
 }
 
 pub fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, u64), ()> {
