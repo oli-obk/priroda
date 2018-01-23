@@ -17,16 +17,18 @@ use horrorshow::Template;
 use EvalContext;
 
 pub fn render_locals<'a, 'tcx: 'a>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, ecx: &EvalContext<'a, 'tcx>, frame: Option<&Frame<'tcx>>) -> String {
-    let locals: Vec<(usize, String, Option<u64>, String, &str)> = frame.map_or(Vec::new(), |&Frame { instance, ref locals, ref mir, ref return_place, .. }| {
+    //               name    ty      alloc        val     style
+    let locals: Vec<(String, String, Option<u64>, String, &str)> = frame.map_or(Vec::new(), |&Frame { instance, ref locals, ref mir, ref return_place, .. }| {
         let ret_val = ecx.read_place(*return_place).ok();
         ::std::iter::once(&ret_val).chain(locals.iter()).enumerate()
             .map(|(id, &val)| {
-                let ty = mir.local_decls[mir::Local::new(id)].ty;
-                let ty = ecx.monomorphize(ty, instance.substs);
+                let local_decl = &mir.local_decls[mir::Local::new(id)];
+                let name = local_decl.name.map(|n|n.as_str().to_string()).unwrap_or_else(||String::new());
+                let ty = ecx.monomorphize(local_decl.ty, instance.substs);
                 match val.map(|value| print_value(ecx, ty, value)) {
-                    Some(Ok((alloc, text))) => (id, ty.to_string(), alloc, text, ""),
-                    Some(Err(())) => (id, ty.to_string(), None, format!("{:?} does not exist", val), ""),
-                    None => (id, ty.to_string(), None, "&lt;uninit&gt;".to_owned(), "font-size: 0;"),
+                    Some(Ok((alloc, text))) => (name, ty.to_string(), alloc, text, ""),
+                    Some(Err(())) => (name, ty.to_string(), None, format!("{:?} does not exist", val), ""),
+                    None => (name, ty.to_string(), None, "&lt;uninit&gt;".to_owned(), "font-size: 0;"),
                 }
             }).collect()
     });
@@ -42,11 +44,12 @@ pub fn render_locals<'a, 'tcx: 'a>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, ecx: &EvalConte
             tr {
                 td(width="20px");
                 th { : "id" }
+                th { : "name" }
                 th { : "alloc" }
                 th { : "memory" }
                 th { : "type" }
             }
-            @ for &(i, ref ty, alloc, ref text, ref style) in &locals {
+            @ for (i, &(ref name, ref ty, alloc, ref text, ref style)) in locals.iter().enumerate() {
                 tr(style=style) {
                     @if i == 0 {
                         th(rowspan=1) { span(class="vertical") { : "Return" } }
@@ -58,6 +61,7 @@ pub fn render_locals<'a, 'tcx: 'a>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, ecx: &EvalConte
                         th(rowspan=tmp_count) { span(class="vertical") { : "Temporaries" } }
                     }
                     td { : format!("_{}", i) }
+                    td { : name }
                     @if let Some(alloc) = alloc {
                         td { : alloc.to_string() }
                     } else {
