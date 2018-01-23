@@ -1,3 +1,6 @@
+mod graphviz;
+mod locals;
+
 use promising_future::Promise;
 use super::{Page, EvalContext};
 use super::Page::*;
@@ -5,20 +8,15 @@ use super::Page::*;
 use miri::{
     Frame,
     MemoryPointer,
-    Value,
-    PrimVal,
-    Pointer,
     AllocId,
 };
 
 
 use rustc::hir::map::definitions::DefPathData;
 use rustc::session::Session;
-use rustc::ty::{TyCtxt, Ty, TyS, TypeVariants, TypeAndMut};
-use rustc::mir;
+use rustc::ty::TyCtxt;
 
 use std::borrow::Cow;
-use std::iter;
 
 pub(crate) struct Renderer<'a, 'tcx: 'a> {
     pub promise: Promise<Page>,
@@ -65,27 +63,11 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             )
         }).collect();
         use rustc_data_structures::indexed_vec::Idx;
-        let locals: Vec<(String, Option<u64>, String, u64)> = frame.map_or(Vec::new(), |&Frame { instance, ref locals, ref mir, ref return_place, .. }| {
-            let ret_val = ecx.read_place(*return_place).ok();
-            iter::once(&ret_val).chain(locals.iter()).enumerate().map(|(id, &val)| {
-                let ty = mir.local_decls[mir::Local::new(id)].ty;
-                let ty = ecx.monomorphize(ty, instance.substs);
-                match val.map(|value| print_value(ecx, ty, value)) {
-                    Some(Ok((alloc, text, len))) => (ty.to_string(), alloc, text, len),
-                    Some(Err(())) => (ty.to_string(), None, format!("{:?} does not exist", val), 0),
-                    None => (ty.to_string(), None, "&lt;uninit&gt;".to_owned(), 0),
-                }
-            }).collect()
-        });
-        let (arg_count, var_count, tmp_count) = frame.map_or((0, 0, 0), |&Frame { ref mir, .. }| (
-            mir.args_iter().count(),
-            mir.vars_iter().count(),
-            mir.temps_iter().count(),
-        ));
+        let rendered_locals = locals::render_locals(self.tcx, self.ecx, frame);
 
         let mir_graph = frame.map(|frame| {
             let mut mir_graphviz = String::new();
-            super::graphviz::write(&frame.mir, &mut mir_graphviz).unwrap();
+            graphviz::write(&frame.mir, &mut mir_graphviz).unwrap();
             String::from_utf8(::cgraph::Graph::parse(mir_graphviz).unwrap().render_dot().unwrap()).unwrap()
         });
         let (bb, stmt) = frame.map_or((0, 0), |frame| {
@@ -143,12 +125,12 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 head {
                     title { : filename.to_str().unwrap() }
                     meta(charset = "UTF-8") {}
-                    script(type="text/javascript") { : Raw(include_str!("../svg-pan-zoom/dist/svg-pan-zoom.js")) }
-                    script(type="text/javascript") { : Raw(include_str!("../zoom_mir.js")) }
+                    script(type="text/javascript") { : Raw(include_str!("../../svg-pan-zoom/dist/svg-pan-zoom.js")) }
+                    script(type="text/javascript") { : Raw(include_str!("../../zoom_mir.js")) }
                 }
                 body(onload="enable_mir_mousewheel()") {
-                    style { : Raw(include_str!("../style.css")) }
-                    style { : Raw(include_str!("../positioning.css")) }
+                    style { : Raw(include_str!("../../style.css")) }
+                    style { : Raw(include_str!("../../positioning.css")) }
                     div(id="left") {
                         div(id="commands") {
                             @ if is_active_stack_frame {
@@ -156,6 +138,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                                 a(href="/next") { div(title="Run until after the next MIR statement/terminator") { : "Next" } }
                                 a(href="/return") { div(title="Run until the function returns") { : "Return" } }
                                 a(href="/continue") { div(title="Run until termination or breakpoint") { : "Continue" } }
+                                a(href="/restart") { div(title="Abort execution and restart") { : "Restart" } }
                             } else {
                                 a(href="/") { div(title="Go to active stack frame") { : "Go back to active stack frame" } }
                             }
@@ -204,36 +187,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                             }
                         }
                         div(id="locals") {
-                            table(border="1") {
-                                tr {
-                                    td(width="20px");
-                                    th { : "id" }
-                                    th { : "alloc" }
-                                    th { : "memory" }
-                                    th { : "type" }
-                                }
-                                @ for (i, &(ref ty, alloc, ref text, _)) in locals.iter().enumerate() {
-                                    tr {
-                                        @if i == 0 {
-                                            th(rowspan=1) { span(class="vertical") { : "Return" } }
-                                        } else if i == 1 && arg_count != 0 {
-                                            th(rowspan=arg_count) { span(class="vertical") { : "Arguments" } }
-                                        } else if i == arg_count + 1 {
-                                            th(rowspan=var_count) { span(class="vertical") { : "Variables" } }
-                                        } else if i == var_count + arg_count + 1 {
-                                            th(rowspan=tmp_count) { span(class="vertical") { : "Temporaries" } }
-                                        }
-                                        td { : format!("_{}", i) }
-                                        @if let Some(alloc) = alloc {
-                                            td { : alloc.to_string() }
-                                        } else {
-                                            td;
-                                        }
-                                        td { : Raw(text) }
-                                        td { : ty }
-                                    }
-                                }
-                            }
+                            : Raw(rendered_locals)
                         }
                     }
                 }
@@ -282,7 +236,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             (_, Some(Err(e))) => self.render_main_window(None, format!("not a number: {:?}", e)),
             (Some(Ok(alloc_id)), offset) => {
                 let offset = offset.unwrap_or(Ok(0)).expect("already checked in previous arm");
-                let (_, mem, bytes) = print_ptr(&self.ecx, MemoryPointer {
+                let (_, mem, bytes) = locals::print_ptr(&self.ecx, MemoryPointer {
                     alloc_id: alloc_id,
                     offset: offset,
                 }.into()).unwrap_or((None, "unknown memory".to_string(), 0));
@@ -304,121 +258,5 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             },
             (None, _) => self.render_main_window(None, "no allocation selected".to_string()),
         }
-    }
-}
-
-fn print_primval(ty: Option<Ty>, val: PrimVal) -> String {
-    match val {
-        PrimVal::Undef => "&lt;undef &gt;".to_string(),
-        PrimVal::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id.0, offset = ptr.offset),
-        PrimVal::Bytes(bytes) => {
-            match ty {
-                Some(&TyS { sty: TypeVariants::TyBool, ..}) => {
-                    if bytes == 0 {
-                        return "false (0)".to_string()
-                    } else if bytes == 1 {
-                        return "true (1)".to_string()
-                    }
-                }
-                Some(&TyS { sty: TypeVariants::TyChar, ..}) => {
-                    if bytes < ::std::u32::MAX as u128 {
-                        let chr = ::std::char::from_u32(bytes as u32).unwrap();
-                        if chr.is_ascii() {
-                            return format!("'{}' (0x{:08X})", chr, bytes);
-                        }
-                    }
-                }
-                Some(&TyS { sty: TypeVariants::TyUint(_), ..}) => {
-                    return format!("{0} (0x{0:08X})", bytes);
-                }
-                Some(&TyS { sty: TypeVariants::TyInt(_), ..}) => {
-                    return format!("{0} (0x{0:08X})", bytes as i128);
-                }
-                Some(&TyS { sty: TypeVariants::TyFloat(float_ty), ..}) => {
-                    use syntax::ast::FloatTy::*;
-                    match float_ty {
-                        F32 => {
-                            if bytes < ::std::u32::MAX as u128 {
-                                return format!("{} (0x{:08X})", <f32>::from_bits(bytes as u32), bytes as u32);
-                            }
-                        }
-                        F64 => {
-                            if bytes < ::std::u64::MAX as u128 {
-                                return format!("{} (0x{:08X})", <f64>::from_bits(bytes as u64), bytes as u64);
-                            }
-                        }
-                    }
-                }
-                _ => {},
-            }
-            bytes.to_string()
-        },
-    }
-}
-
-fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>, String, u64), ()> {
-    let txt = match val {
-        Value::ByRef(ptr, _align) => return print_ptr(ecx, ptr),
-        Value::ByVal(primval) => print_primval(Some(ty), primval),
-        Value::ByValPair(val, extra) => {
-            match ty.sty {
-                TypeVariants::TyRawPtr(TypeAndMut { ty: &TyS { sty: TypeVariants::TyStr, .. }, .. }) |
-                TypeVariants::TyRef(_, TypeAndMut { ty: &TyS { sty: TypeVariants::TyStr, .. }, .. }) => {
-                    if let (PrimVal::Ptr(ptr), PrimVal::Bytes(extra)) = (val, extra) {
-                        println!("{:?} ({})", ptr, extra);
-                        if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
-                            if (ptr.offset as u128) < allocation.bytes.len() as u128 {
-                                let bytes = &allocation.bytes[ptr.offset as usize..];
-                                let s = String::from_utf8_lossy(bytes);
-                                return Ok((None, format!("\"{}\" ({}, {})", s, print_primval(None, val), extra), 0));
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-            format!("{}, {}", print_primval(None, val), print_primval(None, extra))
-        },
-    };
-    Ok((None, txt, 0))
-}
-
-fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, u64), ()> {
-    let ptr = ptr.to_ptr().map_err(|_| ())?;
-    match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr)) {
-        (Ok(alloc), Err(_)) => {
-            use std::fmt::Write;
-            let mut s = String::new();
-            let mut i = 0;
-            while i < alloc.bytes.len() as u64 {
-                if let Some(&reloc) = alloc.relocations.get(&i) {
-                    i += ecx.memory().pointer_size();
-                    write!(&mut s,
-                        "<a style=\"text-decoration: none\" href=\"/ptr/{alloc}/{offset}\">┠{nil:─<wdt$}┨</a>",
-                        alloc = reloc.0,
-                        offset = ptr.offset,
-                        nil = "",
-                        wdt = (ecx.memory().pointer_size() * 2 - 2) as usize,
-                    ).unwrap();
-                } else {
-                    if alloc.undef_mask.is_range_defined(i, i + 1) {
-                        write!(&mut s, "{:02x}", alloc.bytes[i as usize] as usize).unwrap();
-                    } else {
-                        let ub_chars = ['∅','∆','∇','∓','∞','⊙','⊠','⊘','⊗','⊛','⊝','⊡','⊠'];
-                        let c1 = (ptr.alloc_id.0 * 769 + i as u64 * 5689) as usize % ub_chars.len();
-                        let c2 = (ptr.alloc_id.0 * 997 + i as u64 * 7193) as usize % ub_chars.len();
-                        write!(&mut s, "<mark>{}{}</mark>", ub_chars[c1], ub_chars[c2]).unwrap();
-                    }
-                    i += 1;
-                }
-            }
-            Ok((Some(ptr.alloc_id.0), s, alloc.bytes.len() as u64))
-        },
-        (Err(_), Ok(_)) => {
-            // FIXME: print function name
-            Ok((None, "function pointer".to_string(), 16))
-        },
-        (Err(_), Err(_)) => Err(()),
-        (Ok(_), Ok(_)) => unreachable!(),
     }
 }

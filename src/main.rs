@@ -23,10 +23,9 @@ extern crate promising_future;
 extern crate horrorshow;
 extern crate cgraph;
 
-mod graphviz;
-mod commands;
-
-use commands::Renderer;
+mod render;
+mod step;
+use render::Renderer;
 
 use horrorshow::prelude::*;
 use promising_future::future_promise;
@@ -48,6 +47,7 @@ fn should_hide_stmt(stmt: &Statement) -> bool {
 type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, miri::Evaluator<'tcx>>;
 
 use rustc::session::Session;
+use rustc::hir::Crate;
 use rustc::ty::{self, TyCtxt, ParamEnv};
 use rustc::ty::layout::LayoutOf;
 use rustc::traits::Reveal;
@@ -77,87 +77,38 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
 
         control.after_analysis.callback = Box::new(|state| {
             state.session.abort_if_errors();
-            let tcx = state.tcx.unwrap();
-
-            let (node_id, span) = state.session.entry_fn.borrow().expect("no main or start function found");
-            let main_id = tcx.hir.local_def_id(node_id);
-
-            let main_instance = ty::Instance::mono(tcx, main_id);
-
-            let limits = resource_limits_from_attributes(state);
-            let mut ecx = EvalContext::new(tcx, ParamEnv::empty(Reveal::All), limits, Default::default(), Default::default());
-            let main_mir = ecx.load_mir(main_instance.def).expect("mir for `main` not found");
-
-            let return_type = main_mir.return_ty();
-            let return_layout = (tcx, ParamEnv::empty(Reveal::All)).layout_of(return_type).expect("couldnt get layout for return pointer");
-            let return_ptr = ecx.memory.allocate(return_layout.size.bytes(), return_layout.align, None).unwrap();
-            ecx.push_stack_frame(
-                main_instance,
-                span,
-                main_mir,
-                Place::from_ptr(return_ptr, return_layout.align),
-                StackPopCleanup::None,
-            ).unwrap();
-
-            act(ecx, state.session, tcx);
+            act(state.session, state.hir_crate.unwrap(), state.tcx.unwrap());
         });
 
         control
     }
 }
 
-fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    enum ShouldContinue {
-        Continue,
-        Stop,
-    }
-    fn step<F>(ecx: &mut EvalContext, continue_while: F) -> Option<String>
-        where F: Fn(&EvalContext) -> ShouldContinue {
-        let mut message = None;
-        loop {
-            if ecx.stack().len() <= 1 && is_ret(&ecx) {
-                break;
-            }
-            match ecx.step() {
-                Ok(true) => {
-                    if let Some(frame) = ecx.stack().last() {
-                        let blck = &frame.mir.basic_blocks()[frame.block];
-                        if frame.stmt != blck.statements.len() {
-                            if should_hide_stmt(&blck.statements[frame.stmt]) {
-                                continue;
-                            }
-                        }
-                    }
-                    if let ShouldContinue::Stop = continue_while(&*ecx) {
-                        break;
-                    }
-                }
-                Ok(false) => {
-                    message = Some("interpretation finished".to_string());
-                    break;
-                }
-                Err(e) => {
-                    message = Some(format!("{:?}", e));
-                    break;
-                }
-            }
-        }
-        message
-    }
+fn create_ecx<'a, 'tcx: 'a>(session: &Session, krate: &Crate, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
+    let (node_id, span) = session.entry_fn.borrow().expect("no main or start function found");
+    let main_id = tcx.hir.local_def_id(node_id);
 
-    fn is_ret(ecx: &EvalContext) -> bool {
-        if let Some(stack) = ecx.stack().last() {
-            let basic_block = &stack.mir.basic_blocks()[stack.block];
+    let main_instance = ty::Instance::mono(tcx, main_id);
 
-            match basic_block.terminator().kind {
-                rustc::mir::TerminatorKind::Return => stack.stmt >= basic_block.statements.len(),
-                _ => false,
-            }
-        } else {
-            true
-        }
-    }
+    let limits = resource_limits_from_attributes(session, krate);
+    let mut ecx = EvalContext::new(tcx, ParamEnv::empty(Reveal::All), limits, Default::default(), Default::default());
+    let main_mir = ecx.load_mir(main_instance.def).expect("mir for `main` not found");
 
+    let return_type = main_mir.return_ty();
+    let return_layout = (tcx, ParamEnv::empty(Reveal::All)).layout_of(return_type).expect("couldnt get layout for return pointer");
+    let return_ptr = ecx.memory.allocate(return_layout.size.bytes(), return_layout.align, None).unwrap();
+    ecx.push_stack_frame(
+        main_instance,
+        span,
+        main_mir,
+        Place::from_ptr(return_ptr, return_layout.align),
+        StackPopCleanup::None,
+    ).unwrap();
+    ecx
+}
+
+fn act<'a, 'tcx: 'a>(session: &Session, krate: &Crate, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
+    let mut ecx = create_ecx(session, krate, tcx);
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
     let sender = Mutex::new(sender);
@@ -182,32 +133,6 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
         let mut matches = path[1..].split('/');
         match matches.next() {
             Some("") | None => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new()),
-            Some("step") => {
-                let message = step(&mut ecx, |_ecx| ShouldContinue::Stop).unwrap_or_else(||String::new());
-                Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message);
-            },
-            Some("next") => {
-                let frame = ecx.stack().len();
-                let stmt = ecx.stack().last().unwrap().stmt;
-                let block = ecx.stack().last().unwrap().block;
-                let message = step(&mut ecx, |ecx| {
-                    if ecx.stack().len() <= frame && (block < ecx.stack().last().unwrap().block || stmt < ecx.stack().last().unwrap().stmt) {
-                        ShouldContinue::Stop
-                    } else {
-                        ShouldContinue::Continue
-                    }
-                });
-                Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message.unwrap_or_else(||String::new()));
-            },
-            Some("return") => {
-                let frame = ecx.stack().len();
-                let message = step(&mut ecx, |ecx| if ecx.stack().len() <= frame && is_ret(&ecx) { ShouldContinue::Stop } else { ShouldContinue::Continue });
-                Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message.unwrap_or_else(||String::new()));
-            }
-            Some("continue") => {
-                let message = step(&mut ecx, |_ecx| ShouldContinue::Continue);
-                Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message.unwrap_or_else(||String::new()));
-            },
             Some("reverse_ptr") => Renderer::new(promise, &ecx, tcx, session).render_reverse_ptr(matches.next().map(str::parse)),
             Some("ptr") => Renderer::new(promise, &ecx, tcx, session).render_ptr_memory(matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse)),
             Some("frame") => match matches.next().map(str::parse) {
@@ -216,7 +141,17 @@ fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyC
                 // display current frame
                 None => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new()),
             },
-            Some(cmd) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("unknown command: {}", cmd)),
+            Some("restart") => {
+                ecx = create_ecx(session, krate, tcx);
+                Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new());
+            }
+            Some(cmd) => {
+                if let Some(message) = ::step::step_command(&mut ecx, cmd) {
+                    Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message);
+                } else {
+                    Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("unknown command: {}", cmd));
+                }
+            }
         }
     }
     handle.join().unwrap();
@@ -250,14 +185,13 @@ impl hyper::server::Service for Service {
     }
 }
 
-fn resource_limits_from_attributes(state: &driver::CompileState) -> miri::ResourceLimits {
+fn resource_limits_from_attributes(session: &Session, krate: &rustc::hir::Crate) -> miri::ResourceLimits {
     let mut limits = miri::ResourceLimits::default();
-    let krate = state.hir_crate.as_ref().unwrap();
     let err_msg = "miri attributes need to be in the form `miri(key = value)`";
     let extract_int = |lit: &syntax::ast::Lit| -> u128 {
         match lit.node {
             syntax::ast::LitKind::Int(i, _) => i,
-            _ => state.session.span_fatal(lit.span, "expected an integer literal"),
+            _ => session.span_fatal(lit.span, "expected an integer literal"),
         }
     };
 
@@ -270,17 +204,17 @@ fn resource_limits_from_attributes(state: &driver::CompileState) -> miri::Resour
                             "memory_size" => limits.memory_size = extract_int(value) as u64,
                             "step_limit" => limits.step_limit = extract_int(value) as u64,
                             "stack_limit" => limits.stack_limit = extract_int(value) as usize,
-                            _ => state.session.span_err(item.span, "unknown miri attribute"),
+                            _ => session.span_err(item.span, "unknown miri attribute"),
                         }
                     } else {
-                        state.session.span_err(inner.span, err_msg);
+                        session.span_err(inner.span, err_msg);
                     }
                 } else {
-                    state.session.span_err(item.span, err_msg);
+                    session.span_err(item.span, err_msg);
                 }
             }
         } else {
-            state.session.span_err(attr.span, err_msg);
+            session.span_err(attr.span, err_msg);
         }
     }
     limits
