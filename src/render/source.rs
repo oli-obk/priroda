@@ -16,6 +16,12 @@ thread_local! {
     };
 }
 
+// These are costly to create
+lazy_static! {
+    static ref B_REGEX: Regex = Regex::new(r#"<span style="[\w\d#:;]+">/\*BEG_HIGHLIGHT\*/</span>"#).unwrap();
+    static ref E_REGEX: Regex = Regex::new(r#"<span style="[\w\d#:;]+">/\*END_HIGHLIGHT\*/(\s*)</span>"#).unwrap();
+}
+
 pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send> {
     if frame.is_none() {
         return Box::new(FnRenderer::new(|_| {}));
@@ -81,11 +87,9 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
                 tmpl << html! {
                     code(id="the_code", style=format!("background-color: #{:02x}{:02x}{:02x}; display: block;", c.r, c.g, c.b)) {
                         @ for line in mir_lines.into_iter().map(|l| {
-                            let b_regex = Regex::new(r#"<span style="[\w\d#:;]+">/\*BEG_HIGHLIGHT\*/</span>"#).unwrap();
-                            let e_regex = Regex::new(r#"<span style="[\w\d#:;]+">/\*END_HIGHLIGHT\*/(\s*)</span>"#).unwrap();
                             let highlighted = styles_to_coloured_html(&h.highlight(&l), IncludeBackground::No);
-                            let highlighted = b_regex.replace(&highlighted, "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>");
-                            let highlighted = e_regex.replace(&highlighted, "</span>$1");
+                            let highlighted = B_REGEX.replace(&highlighted, "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>");
+                            let highlighted = E_REGEX.replace(&highlighted, "</span>$1");
                             highlighted.into_owned()
                         }) {
                             : Raw(line);
