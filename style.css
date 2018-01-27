@@ -1,6 +1,9 @@
 * {
   box-sizing: border-box;
 }
+#left > *, #right > * {
+  overflow: scroll;
+}
 
 body {
   margin: 0px;

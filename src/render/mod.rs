@@ -1,5 +1,6 @@
 mod graphviz;
 mod locals;
+mod source;
 
 use promising_future::Promise;
 use super::{Page, EvalContext};
@@ -64,6 +65,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         }).collect();
         use rustc_data_structures::indexed_vec::Idx;
         let rendered_locals = locals::render_locals(self.tcx, self.ecx, frame);
+        let rendered_source = source::render_source(self.tcx, frame);
 
         let mir_graph = frame.map(|frame| {
             let mut mir_graphviz = String::new();
@@ -188,6 +190,9 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                         }
                         div(id="locals") {
                             : Raw(rendered_locals)
+                        }
+                        div(id="source") {
+                            : rendered_source
                         }
                     }
                 }

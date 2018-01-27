@@ -15,5 +15,7 @@ open = "1.1.1"
 futures = "0.1.14"
 promising-future = "0.2"
 horrorshow = "0.6.2"
+regex = "0.2.5"
+syntect = "2.0.0"
 cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "b65e460ee323b31dca55b5541141a6b73272e72a" }
 miri = { path = "miri" }

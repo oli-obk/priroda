@@ -15,13 +15,16 @@ extern crate env_logger;
 extern crate log_settings;
 extern crate log;
 extern crate syntax;
+extern crate syntax_pos;
 extern crate hyper;
 extern crate futures;
 extern crate open;
 extern crate promising_future;
+extern crate syntect;
 #[macro_use]
 extern crate horrorshow;
 extern crate cgraph;
+extern crate regex;
 
 mod render;
 mod step;
