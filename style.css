@@ -1,9 +1,6 @@
 * {
   box-sizing: border-box;
 }
-#left > *, #right > * {
-  overflow: scroll;
-}
 
 body {
   margin: 0px;
@@ -45,7 +42,9 @@ body {
 }
 
 #commands {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
   background-color: white;
   padding: 2px;
 }
@@ -53,6 +52,7 @@ body {
 #commands > a {
   text-decoration: none;
   padding-right: 2px;
+  margin: 3px;
 }
 
 #commands > a > div {

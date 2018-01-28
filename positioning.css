@@ -4,7 +4,7 @@
   height: 100vh;
   margin: 2px;
   vertical-align: top;
-  overflow: scroll;
+  overflow: auto;
 }
 
 #mir {
