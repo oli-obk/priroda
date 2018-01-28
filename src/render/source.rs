@@ -18,8 +18,9 @@ thread_local! {
 
 // These are costly to create
 lazy_static! {
-    static ref B_REGEX: Regex = Regex::new(r#"<span style="[\w\d#:;]+">/\*BEG_HIGHLIGHT\*/</span>"#).unwrap();
-    static ref E_REGEX: Regex = Regex::new(r#"<span style="[\w\d#:;]+">/\*END_HIGHLIGHT\*/(\s*)</span>"#).unwrap();
+    static ref BEG_REGEX: Regex = Regex::new(r#"<span style="[\w\d#:;]+">/\*BEG_HIGHLIGHT\*/</span>"#).unwrap();
+    static ref END_REGEX: Regex = Regex::new(r#"<span style="[\w\d#:;]+">/\*END_HIGHLIGHT\*/(\s*)</span>"#).unwrap();
+    static ref BOTH_REGEX: Regex = Regex::new(r#"<span style="[\w\d#:;]+">/\*BEG_HIGHLIGHT\*//\*END_HIGHLIGHT\*/(\s*)</span>"#).unwrap();
 }
 
 pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send> {
@@ -28,7 +29,6 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
     }
     let frame = frame.unwrap();
     let codemap = tcx.sess.codemap();
-    let mir_span = frame.mir.span;
     let mut instr_spans = vec![
         if frame.stmt == frame.mir[frame.block].statements.len() {
             frame.mir[frame.block].terminator().source_info.span
@@ -53,7 +53,7 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
         instr_spans.last().unwrap().lo(),
         instr_spans.last().unwrap().hi(),
     );
-    let mut mir_src = if let Ok(file_lines) = codemap.span_to_lines(mir_span) {
+    let mut file_src = if let Ok(file_lines) = codemap.span_to_lines(*instr_spans.last().unwrap()) {
         if let Some(ref src) = file_lines.file.src {
             Ok(src.to_string())
         } else {
@@ -62,15 +62,34 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
     } else {
         Err("<couldnt get lines for span>".to_string())
     };
-    if let Ok(ref mut mir_src) = mir_src {
-        mir_src.insert_str((instr_bytepos_begin_end.1).0 as usize, "/*END_HIGHLIGHT*/");
-        mir_src.insert_str((instr_bytepos_begin_end.0).0 as usize, "/*BEG_HIGHLIGHT*/");
+    if let Ok(ref mut file_src) = file_src {
+        file_src.insert_str((instr_bytepos_begin_end.1).0 as usize, "/*END_HIGHLIGHT*/");
+        file_src.insert_str((instr_bytepos_begin_end.0).0 as usize, "/*BEG_HIGHLIGHT*/");
     }
-    let mir_lines = mir_src
+
+    let ts = ThemeSet::load_defaults();
+    let t = &ts.themes["Solarized (light)"];
+    let bg_color = t.settings.background.unwrap_or(Color::WHITE);
+    let mut h = RUST_SYNTAX.with(|syntax| HighlightLines::new(syntax, t));
+
+    let highlighted_src = file_src
         .unwrap_or_else(|e| e)
         .split('\n')
-        .map(|l| l.to_string())
-        .collect::<Vec<_>>();
+        .into_iter()
+        .map(|l| {
+            let highlighted = styles_to_coloured_html(&h.highlight(&l), IncludeBackground::No);
+            let highlighted = BEG_REGEX.replace(
+                &highlighted,
+                "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>",
+            );
+            let highlighted = END_REGEX.replace(&highlighted, "</span>$1");
+            let highlighted = BOTH_REGEX.replace(
+                &highlighted,
+                "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>←</span>"
+            );
+            highlighted.into_owned()
+        })
+        .fold(String::new(), |acc, x| acc + "\n" + &x);
 
     let macro_backtrace = format!("macro backtrace: {:#?}", instr_spans);
     box_html! {
@@ -79,24 +98,8 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
                 : macro_backtrace
             }
             br;
-            |tmpl| {
-                let ts = ThemeSet::load_defaults();
-                let t = &ts.themes["Solarized (light)"];
-                let c = t.settings.background.unwrap_or(Color::WHITE);
-                let mut h = RUST_SYNTAX.with(|syntax| { HighlightLines::new(syntax, t) });
-                tmpl << html! {
-                    code(id="the_code", style=format!("background-color: #{:02x}{:02x}{:02x}; display: block;", c.r, c.g, c.b)) {
-                        @ for line in mir_lines.into_iter().map(|l| {
-                            let highlighted = styles_to_coloured_html(&h.highlight(&l), IncludeBackground::No);
-                            let highlighted = B_REGEX.replace(&highlighted, "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>");
-                            let highlighted = E_REGEX.replace(&highlighted, "</span>$1");
-                            highlighted.into_owned()
-                        }) {
-                            : Raw(line);
-                            br;
-                        }
-                    }
-                }
+            code(id="the_code", style=format!("background-color: #{:02x}{:02x}{:02x}; display: block;", bg_color.r, bg_color.g, bg_color.b)) {
+                : Raw(highlighted_src)
             }
         }
     }
