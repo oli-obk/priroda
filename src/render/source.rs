@@ -49,57 +49,60 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
         instr_spans.push(span);
     }
 
-    let instr_bytepos_begin_end = (
-        instr_spans.last().unwrap().lo(),
-        instr_spans.last().unwrap().hi(),
-    );
-    let mut file_src = if let Ok(file_lines) = codemap.span_to_lines(*instr_spans.last().unwrap()) {
-        if let Some(ref src) = file_lines.file.src {
-            Ok(src.to_string())
-        } else {
-            Err("<no source info for span>".to_string())
-        }
-    } else {
-        Err("<couldnt get lines for span>".to_string())
-    };
-    if let Ok(ref mut file_src) = file_src {
-        file_src.insert_str((instr_bytepos_begin_end.1).0 as usize, "/*END_HIGHLIGHT*/");
-        file_src.insert_str((instr_bytepos_begin_end.0).0 as usize, "/*BEG_HIGHLIGHT*/");
-    }
-
     let ts = ThemeSet::load_defaults();
     let t = &ts.themes["Solarized (light)"];
     let bg_color = t.settings.background.unwrap_or(Color::WHITE);
     let mut h = RUST_SYNTAX.with(|syntax| HighlightLines::new(syntax, t));
 
-    let highlighted_src = file_src
-        .unwrap_or_else(|e| e)
-        .split('\n')
-        .into_iter()
-        .map(|l| {
-            let highlighted = styles_to_coloured_html(&h.highlight(&l), IncludeBackground::No);
-            let highlighted = BEG_REGEX.replace(
-                &highlighted,
-                "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>",
-            );
-            let highlighted = END_REGEX.replace(&highlighted, "</span>$1");
-            let highlighted = BOTH_REGEX.replace(
-                &highlighted,
-                "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>←</span>"
-            );
-            highlighted.into_owned()
+    let highlighted_sources = instr_spans.iter().map(|sp| {
+        (sp, if let Ok(file_lines) = codemap.span_to_lines(*sp) {
+            if let Some(ref src) = file_lines.file.src {
+                Ok(src.to_string())
+            } else {
+                Err("<no source info for span>".to_string())
+            }
+        } else {
+            Err("<couldnt get lines for span>".to_string())
         })
-        .fold(String::new(), |acc, x| acc + "\n" + &x);
+    }).map(|(sp, src)| {
+        match src {
+            Ok(mut file_src) => {
+                let lo = codemap.bytepos_to_file_charpos(sp.lo()).0;
+                let hi = codemap.bytepos_to_file_charpos(sp.hi()).0;
+                file_src.insert_str(hi as usize, "/*END_HIGHLIGHT*/");
+                file_src.insert_str(lo as usize, "/*BEG_HIGHLIGHT*/");
+                (sp, file_src)
+            }
+            Err(err) => (sp, err),
+        }
+    }).map(|(sp, src)| {
+        (format!("{:?}", sp), src
+            .split('\n')
+            .into_iter()
+            .map(|l| {
+                let highlighted = styles_to_coloured_html(&h.highlight(&l), IncludeBackground::No);
+                let highlighted = BEG_REGEX.replace(
+                    &highlighted,
+                    "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>",
+                );
+                let highlighted = END_REGEX.replace(&highlighted, "</span>$1");
+                let highlighted = BOTH_REGEX.replace(
+                    &highlighted,
+                    "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>←</span>"
+                );
+                highlighted.into_owned()
+            })
+            .fold(String::new(), |acc, x| acc + "\n" + &x))
+    }).rev().collect::<Vec<_>>();
 
-    let macro_backtrace = format!("macro backtrace: {:#?}", instr_spans);
     box_html! {
         pre {
-            div(id="macro_backtrace") {
-                : macro_backtrace
-            }
-            br;
             code(id="the_code", style=format!("background-color: #{:02x}{:02x}{:02x}; display: block;", bg_color.r, bg_color.g, bg_color.b)) {
-                : Raw(highlighted_src)
+                @ for (sp, source) in highlighted_sources {
+                    : sp;
+                    : Raw(source);
+                    br; br;
+                }
             }
         }
     }
