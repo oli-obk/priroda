@@ -1,5 +1,4 @@
 #![feature(rustc_private, custom_attribute)]
-#![feature(i128_type)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
 
@@ -7,7 +6,6 @@ extern crate getopts;
 extern crate miri;
 extern crate rustc;
 extern crate rustc_driver;
-extern crate rustc_trans;
 extern crate rustc_data_structures;
 extern crate rustc_const_math;
 extern crate graphviz as dot;
@@ -49,7 +47,7 @@ fn should_hide_stmt(stmt: &Statement) -> bool {
     }
 }
 
-type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, miri::Evaluator<'tcx>>;
+type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, 'tcx, miri::Evaluator<'tcx>>;
 
 use rustc::session::Session;
 use rustc::hir::Crate;
@@ -82,25 +80,24 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
 
         control.after_analysis.callback = Box::new(|state| {
             state.session.abort_if_errors();
-            act(state.session, state.hir_crate.unwrap(), state.tcx.unwrap());
+            act(state.session, state.tcx.unwrap());
         });
 
         control
     }
 }
 
-fn create_ecx<'a, 'tcx: 'a>(session: &Session, krate: &Crate, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
+fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
     let (node_id, span) = session.entry_fn.borrow().expect("no main or start function found");
     let main_id = tcx.hir.local_def_id(node_id);
 
     let main_instance = ty::Instance::mono(tcx, main_id);
 
-    let limits = resource_limits_from_attributes(session, krate);
-    let mut ecx = EvalContext::new(tcx, ParamEnv::empty(Reveal::All), limits, Default::default(), Default::default());
+    let mut ecx = EvalContext::new(tcx.at(span), ParamEnv::reveal_all(), Default::default(), Default::default());
     let main_mir = ecx.load_mir(main_instance.def).expect("mir for `main` not found");
 
     let return_type = main_mir.return_ty();
-    let return_layout = (tcx, ParamEnv::empty(Reveal::All)).layout_of(return_type).expect("couldnt get layout for return pointer");
+    let return_layout = tcx.layout_of(ParamEnv::reveal_all().and(return_type)).expect("couldnt get layout for return pointer");
     let return_ptr = ecx.memory.allocate(return_layout.size.bytes(), return_layout.align, None).unwrap();
     ecx.push_stack_frame(
         main_instance,
@@ -112,8 +109,8 @@ fn create_ecx<'a, 'tcx: 'a>(session: &Session, krate: &Crate, tcx: TyCtxt<'a, 't
     ecx
 }
 
-fn act<'a, 'tcx: 'a>(session: &Session, krate: &Crate, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    let mut ecx = create_ecx(session, krate, tcx);
+fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
+    let mut ecx = create_ecx(session, tcx);
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
     let sender = Mutex::new(sender);
@@ -147,7 +144,7 @@ fn act<'a, 'tcx: 'a>(session: &Session, krate: &Crate, tcx: TyCtxt<'a, 'tcx, 'tc
                 None => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new()),
             },
             Some("restart") => {
-                ecx = create_ecx(session, krate, tcx);
+                ecx = create_ecx(session, tcx);
                 Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new());
             }
             Some(cmd) => {
@@ -188,41 +185,6 @@ impl hyper::server::Service for Service {
                     .with_status(hyper::StatusCode::NotFound)
         })
     }
-}
-
-fn resource_limits_from_attributes(session: &Session, krate: &rustc::hir::Crate) -> miri::ResourceLimits {
-    let mut limits = miri::ResourceLimits::default();
-    let err_msg = "miri attributes need to be in the form `miri(key = value)`";
-    let extract_int = |lit: &syntax::ast::Lit| -> u128 {
-        match lit.node {
-            syntax::ast::LitKind::Int(i, _) => i,
-            _ => session.span_fatal(lit.span, "expected an integer literal"),
-        }
-    };
-
-    for attr in krate.attrs.iter().filter(|a| a.name().map_or(false, |n| n == "miri")) {
-        if let Some(items) = attr.meta_item_list() {
-            for item in items {
-                if let NestedMetaItemKind::MetaItem(ref inner) = item.node {
-                    if let MetaItemKind::NameValue(ref value) = inner.node {
-                        match &inner.name().as_str()[..] {
-                            "memory_size" => limits.memory_size = extract_int(value) as u64,
-                            "step_limit" => limits.step_limit = extract_int(value) as u64,
-                            "stack_limit" => limits.stack_limit = extract_int(value) as usize,
-                            _ => session.span_err(item.span, "unknown miri attribute"),
-                        }
-                    } else {
-                        session.span_err(inner.span, err_msg);
-                    }
-                } else {
-                    session.span_err(item.span, err_msg);
-                }
-            }
-        } else {
-            session.span_err(attr.span, err_msg);
-        }
-    }
-    limits
 }
 
 fn find_sysroot() -> String {

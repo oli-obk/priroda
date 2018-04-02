@@ -16,11 +16,11 @@ use horrorshow::Template;
 
 use EvalContext;
 
-pub fn render_locals<'a, 'tcx: 'a>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, ecx: &EvalContext<'a, 'tcx>, frame: Option<&Frame<'tcx>>) -> String {
+pub fn render_locals<'a, 'tcx: 'a>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, ecx: &EvalContext<'a, 'tcx>, frame: Option<&Frame<'tcx, 'tcx>>) -> String {
     //               name    ty      alloc        val     style
     let locals: Vec<(String, String, Option<u64>, String, &str)> = frame.map_or(Vec::new(), |&Frame { instance, ref locals, ref mir, ref return_place, .. }| {
         let ret_val = ecx.read_place(*return_place).ok();
-        ::std::iter::once(&ret_val).chain(locals.iter()).enumerate()
+        /*::std::iter::once(&ret_val).chain(*/locals.iter().enumerate()
             .map(|(id, &val)| {
                 let local_decl = &mir.local_decls[mir::Local::new(id)];
                 let name = local_decl.name.map(|n|n.as_str().to_string()).unwrap_or_else(||String::new());
