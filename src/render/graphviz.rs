@@ -9,14 +9,16 @@
 // except according to those terms.
 
 use dot;
+use step::Breakpoint;
 use rustc::mir::*;
-use std::fmt::Debug;
-use std::fmt::{self, Write};
+use std::fmt::{self, Debug, Write};
+use std::collections::HashSet;
 
 use rustc_data_structures::indexed_vec::Idx;
+use rustc::hir::def_id::DefId;
 
 /// Write a graphviz DOT graph of a list of MIRs.
-pub fn write<W: Write>(mir: &Mir, w: &mut W) -> fmt::Result {
+pub fn write<W: Write>(mir: &Mir, def_id: DefId, breakpoints: &HashSet<Breakpoint>, w: &mut W) -> fmt::Result {
     writeln!(w, "digraph Mir {{")?;
 
     // Global graph properties
@@ -26,7 +28,7 @@ pub fn write<W: Write>(mir: &Mir, w: &mut W) -> fmt::Result {
 
     // Nodes
     for (block, _) in mir.basic_blocks().iter_enumerated() {
-        write_node(block, mir, w)?;
+        write_node(block, mir, def_id, breakpoints, w)?;
     }
 
     // Edges
@@ -45,6 +47,8 @@ pub fn write<W: Write>(mir: &Mir, w: &mut W) -> fmt::Result {
 /// data (using HTML enclosed with `<tr>` in the emitted text).
 pub fn write_node_label<W: Write, INIT, FINI>(block: BasicBlock,
                                               mir: &Mir,
+                                              def_id: DefId,
+                                              breakpoints: &HashSet<Breakpoint>,
                                               w: &mut W,
                                               num_cols: u32,
                                               init: INIT,
@@ -67,7 +71,14 @@ pub fn write_node_label<W: Write, INIT, FINI>(block: BasicBlock,
     // List of statements in the middle.
     if !data.statements.is_empty() {
         write!(w, r#"<tr><td align="left" balign="left">"#)?;
-        for statement in &data.statements {
+        for (stmt_index, statement) in data.statements.iter().enumerate() {
+            if let Some(_) = breakpoints.iter().find(|&Breakpoint(bp_def_id, bb, stmt)| {
+                def_id == *bp_def_id && block == *bb && stmt_index == *stmt
+            }) {
+                write!(w, "+ ")?;
+            } else {
+                write!(w, "&nbsp; ")?;
+            }
             if ::should_hide_stmt(statement) {
                 write!(w, "&lt;+&gt;<br/>")?;
             } else {
@@ -90,10 +101,10 @@ pub fn write_node_label<W: Write, INIT, FINI>(block: BasicBlock,
 }
 
 /// Write a graphviz DOT node for the given basic block.
-fn write_node<W: Write>(block: BasicBlock, mir: &Mir, w: &mut W) -> fmt::Result {
+fn write_node<W: Write>(block: BasicBlock, mir: &Mir, def_id: DefId, breakpoints: &HashSet<Breakpoint>, w: &mut W) -> fmt::Result {
     // Start a new node with the label to follow, in one of DOT's pseudo-HTML tables.
     write!(w, r#"    {} [shape="none", label=<"#, node(block))?;
-    write_node_label(block, mir, w, 1, |_| Ok(()), |_| Ok(()))?;
+    write_node_label(block, mir, def_id, breakpoints, w, 1, |_| Ok(()), |_| Ok(()))?;
     // Close the node label and the node itself.
     writeln!(w, ">];")
 }

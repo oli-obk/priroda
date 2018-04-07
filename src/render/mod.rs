@@ -5,6 +5,7 @@ mod source;
 use promising_future::Promise;
 use super::{Page, EvalContext};
 use super::Page::*;
+use step::Breakpoint;
 
 use miri::{
     Frame,
@@ -18,12 +19,14 @@ use rustc::session::Session;
 use rustc::ty::TyCtxt;
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 pub(crate) struct Renderer<'a, 'tcx: 'a> {
     pub promise: Promise<Page>,
     pub ecx: &'a EvalContext<'a, 'tcx>,
     pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
     pub session: &'a Session,
+    pub breakpoints: &'a HashSet<Breakpoint>,
 }
 
 impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
@@ -32,12 +35,14 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         ecx: &'a EvalContext<'a, 'tcx>,
         tcx: TyCtxt<'a, 'tcx, 'tcx>,
         session: &'a Session,
+        breakpoints: &'a HashSet<Breakpoint>,
     ) -> Self {
         Renderer {
-            promise: promise,
-            ecx: ecx,
-            tcx: tcx,
-            session: session,
+            promise,
+            ecx,
+            tcx,
+            session,
+            breakpoints,
         }
     }
     pub fn render_main_window<MSG: Into<Cow<'static, str>>>(
@@ -45,7 +50,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         display_frame: Option<usize>,
         message: MSG,
     ) {
-        let Renderer { promise, ecx, tcx, session } = self;
+        let Renderer { promise, ecx, tcx, session, breakpoints } = self;
         let message = message.into().into_owned();
         let is_active_stack_frame = match display_frame {
             Some(n) => n == ecx.stack().len() - 1,
@@ -53,7 +58,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         };
         let frame = display_frame.and_then(|frame| ecx.stack().get(frame)).or_else(|| ecx.stack().last());
         let filename = session.local_crate_source_file.clone().unwrap_or_else(|| "no file name".to_string().into());
-        let stack: Vec<(String, String)> = ecx.stack().iter().map(|&Frame { instance, span, .. } | {
+        let stack: Vec<(String, String, String)> = ecx.stack().iter().map(|&Frame { instance, span, .. } | {
             (
                 if tcx.def_key(instance.def_id()).disambiguated_data.data == DefPathData::ClosureExpr {
                     "inside call to closure".to_string()
@@ -61,15 +66,17 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                     instance.to_string()
                 },
                 session.codemap().span_to_string(span),
+                format!("{:?}", instance.def_id()),
             )
         }).collect();
+        let rendered_breakpoints: Vec<String> = breakpoints.iter().map(|&Breakpoint(def_id, bb, stmt)| format!("{:?}@{}:{}", def_id, bb.index(), stmt)).collect();
         use rustc_data_structures::indexed_vec::Idx;
         let rendered_locals = locals::render_locals(self.tcx, self.ecx, frame);
         let rendered_source = source::render_source(self.tcx, frame);
 
         let mir_graph = frame.map(|frame| {
             let mut mir_graphviz = String::new();
-            graphviz::write(&frame.mir, &mut mir_graphviz).unwrap();
+            graphviz::write(&frame.mir, frame.instance.def_id(), breakpoints, &mut mir_graphviz).unwrap();
             String::from_utf8(::cgraph::Graph::parse(mir_graphviz).unwrap().render_dot().unwrap()).unwrap()
         });
         let (bb, stmt) = frame.map_or((0, 0), |frame| {
@@ -141,6 +148,8 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                                 a(href="/return") { div(title="Run until the function returns") { : "Return" } }
                                 a(href="/continue") { div(title="Run until termination or breakpoint") { : "Continue" } }
                                 a(href="/restart") { div(title="Abort execution and restart") { : "Restart" } }
+                                a(href="/add_breakpoint_here") { div(title="Add breakpoint at current location") { : "Add breakpoint here"} }
+                                a(href="/remove_all_breakpoints") { div(title="Remove all breakpoints") { : "Remove all breakpoints"} }
                             } else {
                                 a(href="/") { div(title="Go to active stack frame") { : "Go back to active stack frame" } }
                             }
@@ -178,12 +187,24 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                     div(id="right") {
                         div(id="stack") {
                             table(border="1") {
-                                @ for (i, &(ref s, ref span)) in stack.iter().enumerate().rev() {
+                                @ for (i, &(ref s, ref span, ref def_id)) in stack.iter().enumerate().rev() {
                                     tr {
                                         @ if i == display_frame.unwrap_or(stack.len() - 1) { td { : Raw("&#8594;") } } else { td; }
                                         td { : s }
                                         td { : span }
+                                        td { : def_id }
                                         @ if i == display_frame.unwrap_or(stack.len() - 1) { td; } else { td { a(href=format!("/frame/{}", i)) { : "View" } } }
+                                    }
+                                }
+                            }
+                        }
+                        div(id="breakpoints") {
+                            : "Breakpoints: "; br;
+                            table(border="1") {
+                                @ for bp in rendered_breakpoints.iter() {
+                                    tr { 
+                                        td { : bp }
+                                        td { a(href=format!("/remove_breakpoint/{}", bp)) { : "remove" } }
                                     }
                                 }
                             }

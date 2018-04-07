@@ -1,3 +1,7 @@
+use rustc::hir::def_id::DefId;
+use rustc::mir;
+use std::collections::HashSet;
+
 use EvalContext;
 
 pub enum ShouldContinue {
@@ -5,17 +9,27 @@ pub enum ShouldContinue {
     Stop,
 }
 
-pub fn step_command(ecx: &mut EvalContext, cmd: &str) -> Option<String> {
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct Breakpoint(pub DefId, pub mir::BasicBlock, pub usize);
+
+fn is_at_breakpoint(ecx: &EvalContext, breakpoints: &HashSet<Breakpoint>) -> bool {
+    let frame = ecx.frame();
+    breakpoints.iter().any(|&Breakpoint(def_id, bb, stmt)| {
+        frame.instance.def_id() == def_id && frame.block == bb && frame.stmt == stmt
+    })
+}
+
+pub fn step_command(ecx: &mut EvalContext, breakpoints: &HashSet<Breakpoint>, cmd: &str) -> Option<String> {
     match cmd {
         "step" => {
-            Some(step(ecx, |_ecx| ShouldContinue::Stop).unwrap_or_else(||String::new()))
+            Some(step(ecx, breakpoints, |_ecx| ShouldContinue::Stop).unwrap_or_else(||String::new()))
         },
         "next" => {
             let frame = ecx.stack().len();
-            let stmt = ecx.stack().last().unwrap().stmt;
-            let block = ecx.stack().last().unwrap().block;
-            let message = step(ecx, |ecx| {
-                if ecx.stack().len() <= frame && (block < ecx.stack().last().unwrap().block || stmt < ecx.stack().last().unwrap().stmt) {
+            let stmt = ecx.frame().stmt;
+            let block = ecx.frame().block;
+            let message = step(ecx, breakpoints, |ecx| {
+                if ecx.stack().len() <= frame && (block < ecx.frame().block || stmt < ecx.frame().stmt) {
                     ShouldContinue::Stop
                 } else {
                     ShouldContinue::Continue
@@ -25,18 +39,24 @@ pub fn step_command(ecx: &mut EvalContext, cmd: &str) -> Option<String> {
         },
         "return" => {
             let frame = ecx.stack().len();
-            let message = step(ecx, |ecx| if ecx.stack().len() <= frame && is_ret(&ecx) { ShouldContinue::Stop } else { ShouldContinue::Continue });
+            let message = step(ecx, breakpoints, |ecx| {
+                if ecx.stack().len() <= frame && is_ret(&ecx) {
+                    ShouldContinue::Stop
+                } else {
+                    ShouldContinue::Continue
+                }
+            });
             Some(message.unwrap_or_else(||String::new()))
         }
         "continue" => {
-            let message = step(ecx, |_ecx| ShouldContinue::Continue);
+            let message = step(ecx, breakpoints, |_ecx| ShouldContinue::Continue);
             Some(message.unwrap_or_else(||String::new()))
         },
         _ => None
     }
 }
 
-pub fn step<F>(ecx: &mut EvalContext, continue_while: F) -> Option<String>
+pub fn step<F>(ecx: &mut EvalContext, breakpoints: &HashSet<Breakpoint>, continue_while: F) -> Option<String>
     where F: Fn(&EvalContext) -> ShouldContinue {
     let mut message = None;
     loop {
@@ -48,12 +68,15 @@ pub fn step<F>(ecx: &mut EvalContext, continue_while: F) -> Option<String>
                 if let Some(frame) = ecx.stack().last() {
                     let blck = &frame.mir.basic_blocks()[frame.block];
                     if frame.stmt != blck.statements.len() {
-                        if ::should_hide_stmt(&blck.statements[frame.stmt]) {
+                        if ::should_hide_stmt(&blck.statements[frame.stmt]) && !is_at_breakpoint(ecx, breakpoints) {
                             continue;
                         }
                     }
                 }
                 if let ShouldContinue::Stop = continue_while(&*ecx) {
+                    break;
+                }
+                if is_at_breakpoint(ecx, breakpoints) {
                     break;
                 }
             }

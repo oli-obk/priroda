@@ -1,4 +1,4 @@
-#![feature(rustc_private, custom_attribute)]
+#![feature(rustc_private, custom_attribute, decl_macro)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
 
@@ -38,8 +38,21 @@ use miri::{
     AllocId,
     Place,
 };
+use step::Breakpoint;
 
-fn should_hide_stmt(stmt: &Statement) -> bool {
+use rustc_data_structures::indexed_vec::Idx;
+use rustc::session::Session;
+use rustc::ty::{self, TyCtxt, ParamEnv};
+use rustc::hir::def_id::{CrateNum, DefId, DefIndex, DefIndexAddressSpace};
+use rustc::mir;
+use rustc_driver::{driver, CompilerCalls};
+
+use std::sync::Mutex;
+use std::collections::HashSet;
+use hyper::server::{Request, Response};
+use futures::future::FutureResult;
+
+fn should_hide_stmt(stmt: &mir::Statement) -> bool {
     use rustc::mir::StatementKind::*;
     match stmt.kind {
         StorageLive(_) | StorageDead(_) | Validate(_, _) | EndRegion(_) | Nop => true,
@@ -48,15 +61,6 @@ fn should_hide_stmt(stmt: &Statement) -> bool {
 }
 
 type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, 'tcx, miri::Evaluator<'tcx>>;
-
-use rustc::session::Session;
-use rustc::ty::{self, TyCtxt, ParamEnv};
-use rustc::mir::Statement;
-use rustc_driver::{driver, CompilerCalls};
-
-use std::sync::Mutex;
-use hyper::server::{Request, Response};
-use futures::future::FutureResult;
 
 enum Page {
     Html(Box<RenderBox + Send>),
@@ -83,6 +87,63 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
     }
 }
 
+fn load_breakpoints_from_file() -> HashSet<Breakpoint> {
+    use std::io::{BufRead, BufReader};
+    use std::fs::File;
+    match File::open("./.priroda_breakpoints") {
+        Ok(file) => {
+            let file = BufReader::new(file);
+            let mut breakpoints = HashSet::new();
+            for line in file.lines() {
+                let line = line.expect("Couldn't read breakpoint from file");
+                if line.trim().is_empty() {
+                    continue;
+                }
+                breakpoints.insert(parse_breakpoint_from_url(&format!("/set/{}", line)).unwrap());
+            }
+            breakpoints
+        }
+        Err(e) => {
+            eprintln!("Couldn't load breakpoint file ./.priroda_breakpoints: {:?}", e);
+            HashSet::new()
+        }
+    }
+}
+
+fn parse_breakpoint_from_url(s: &str) -> Result<Breakpoint, String> {
+    let regex = regex::Regex::new(r#"/\w+/DefId\((\d+)/(0|1):(\d+) ~ [^\)]+\)@(\d+):(\d+)"#).unwrap();
+    // my_command/DefId(1/0:14824 ~ mycrate::main)@1:3
+    //                  ^ ^ ^                      ^ ^
+    //                  | | |                      | statement
+    //                  | | |                      BasicBlock
+    //                  | | DefIndex::as_array_index()
+    //                  | DefIndexAddressSpace
+    //                  CrateNum
+
+    let s = s.replace("%20", " ");
+    let caps = regex.captures(&s).ok_or_else(||format!("Invalid breakpoint {}", s))?;
+
+    // Parse DefId
+    let crate_num = CrateNum::new(caps.get(1).unwrap().as_str().parse::<usize>().unwrap());
+    let address_space = match caps.get(2).unwrap().as_str().parse::<u64>().unwrap() {
+        0 => DefIndexAddressSpace::Low,
+        1 => DefIndexAddressSpace::High,
+        _ => return Err("address_space is not 0 or 1".to_string()),
+    };
+    let index = caps.get(3).unwrap().as_str().parse::<usize>().map_err(|_| "index is not a positive integer")?;
+    let def_index = DefIndex::from_array_index(index, address_space);
+    let def_id = DefId {
+        krate: crate_num,
+        index: def_index,
+    };
+
+    // Parse block and stmt
+    let bb = mir::BasicBlock::new(caps.get(4).unwrap().as_str().parse::<usize>().map_err(|_| "block id is not a positive integer")?);
+    let stmt = caps.get(5).unwrap().as_str().parse::<usize>().map_err(|_| "stmt id is not a positive integer")?;
+
+    Ok(Breakpoint(def_id, bb, stmt))
+}
+
 fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
     let (node_id, span) = session.entry_fn.borrow().expect("no main or start function found");
     let main_id = tcx.hir.local_def_id(node_id);
@@ -107,6 +168,8 @@ fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> E
 
 fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     let mut ecx = create_ecx(session, tcx);
+    let mut breakpoints: HashSet<Breakpoint> = load_breakpoints_from_file();
+
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
     let sender = Mutex::new(sender);
@@ -126,28 +189,71 @@ fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
 
     // process commands
     for (path, promise) in receiver {
+        macro renderer() {
+            Renderer::new(promise, &ecx, tcx, session, &breakpoints)
+        }
+        macro render_main_window($frame:expr, $msg:expr) {
+            renderer!().render_main_window($frame, $msg);
+        }
+
         println!("processing `{}`", path);
         assert_eq!(&path[..1], "/");
         let mut matches = path[1..].split('/');
         match matches.next() {
-            Some("") | None => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new()),
-            Some("reverse_ptr") => Renderer::new(promise, &ecx, tcx, session).render_reverse_ptr(matches.next().map(str::parse)),
-            Some("ptr") => Renderer::new(promise, &ecx, tcx, session).render_ptr_memory(matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse)),
+            Some("") | None => render_main_window!(None, String::new()),
+            Some("reverse_ptr") => renderer!().render_reverse_ptr(matches.next().map(str::parse)),
+            Some("ptr") => renderer!().render_ptr_memory(matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse)),
             Some("frame") => match matches.next().map(str::parse) {
-                Some(Ok(n)) => Renderer::new(promise, &ecx, tcx, session).render_main_window(Some(n), String::new()),
-                Some(Err(e)) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("not a number: {:?}", e)),
+                Some(Ok(n)) => render_main_window!(Some(n), String::new()),
+                Some(Err(e)) => render_main_window!(None, format!("not a number: {:?}", e)),
                 // display current frame
-                None => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new()),
+                None => render_main_window!(None, String::new()),
             },
+            Some("add_breakpoint") => {
+                let res = parse_breakpoint_from_url(&path);
+                match res {
+                    Ok(breakpoint) => {
+                        breakpoints.insert(breakpoint);
+                        render_main_window!(None, format!("Breakpoint added for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
+                    }
+                    Err(e) => {
+                        render_main_window!(None, e.to_string());
+                    }
+                }
+            }
+            Some("add_breakpoint_here") => {
+                let frame = ecx.frame();
+                breakpoints.insert(Breakpoint(frame.instance.def_id(), frame.block, frame.stmt));
+                render_main_window!(None, format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), frame.block.index(), frame.stmt));
+            }
+            Some("remove_breakpoint") => {
+                let res = parse_breakpoint_from_url(&path);
+                match res {
+                    Ok(breakpoint) => {
+                        if breakpoints.remove(&breakpoint) {
+                            render_main_window!(None, format!("Breakpoint removed for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
+                        } else {
+                            render_main_window!(None, format!("No breakpoint for for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
+                        }
+                    }
+                    Err(e) => {
+                        render_main_window!(None, e.to_string());
+                    }
+                }
+            }
+            Some("remove_all_breakpoints") => {
+                breakpoints.clear();
+                render_main_window!(None, format!("All breakpoints removed"));
+            }
             Some("restart") => {
                 ecx = create_ecx(session, tcx);
-                Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new());
+                render_main_window!(None, String::new());
             }
             Some(cmd) => {
-                if let Some(message) = ::step::step_command(&mut ecx, cmd) {
-                    Renderer::new(promise, &ecx, tcx, session).render_main_window(None, message);
+                if let Some(message) = ::step::step_command(&mut ecx, &breakpoints, cmd) {
+                    render_main_window!(None, message);
                 } else {
-                    Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("unknown command: {}", cmd));
+                    render_main_window!(None, format!("unknown command: {}", cmd));
                 }
             }
         }
