@@ -1,6 +1,3 @@
 [submodule "svg-pan-zoom"]
 	path = svg-pan-zoom
 	url = https://github.com/ariutta/svg-pan-zoom.git
-[submodule "miri"]
-	path = miri
-	url = https://github.com/bjorn3/miri.git
