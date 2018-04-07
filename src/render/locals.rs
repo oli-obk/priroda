@@ -4,11 +4,9 @@ use rustc::mir;
 
 use miri::{
     Frame,
-    MemoryPointer,
     Value,
     PrimVal,
     Pointer,
-    AllocId,
 };
 
 use horrorshow::prelude::*;
@@ -18,20 +16,35 @@ use EvalContext;
 
 pub fn render_locals<'a, 'tcx: 'a>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, ecx: &EvalContext<'a, 'tcx>, frame: Option<&Frame<'tcx, 'tcx>>) -> String {
     //               name    ty      alloc        val     style
-    let locals: Vec<(String, String, Option<u64>, String, &str)> = frame.map_or(Vec::new(), |&Frame { instance, ref locals, ref mir, ref return_place, .. }| {
-        let ret_val = ecx.read_place(*return_place).ok();
-        /*::std::iter::once(&ret_val).chain(*/locals.iter().enumerate()
-            .map(|(id, &val)| {
-                let local_decl = &mir.local_decls[mir::Local::new(id)];
-                let name = local_decl.name.map(|n|n.as_str().to_string()).unwrap_or_else(||String::new());
-                let ty = ecx.monomorphize(local_decl.ty, instance.substs);
-                match val.map(|value| print_value(ecx, ty, value)) {
-                    Some(Ok((alloc, text))) => (name, ty.to_string(), alloc, text, ""),
-                    Some(Err(())) => (name, ty.to_string(), None, format!("{:?} does not exist", val), ""),
-                    None => (name, ty.to_string(), None, "&lt;uninit&gt;".to_owned(), "font-size: 0;"),
-                }
-            }).collect()
-    });
+    let locals: Vec<(String, String, Option<u64>, String, &str)> = frame.map_or(
+        Vec::new(),
+        |&Frame {
+             instance,
+             ref locals,
+             ref mir,
+             return_place: ref _return_place,
+             ..
+         }| {
+            locals
+                .iter()
+                .enumerate()
+                .map(|(id, &val)| {
+                    let local_decl = &mir.local_decls[mir::Local::new(id)];
+                    let name = local_decl
+                        .name
+                        .map(|n| n.as_str().to_string())
+                        .unwrap_or_else(|| String::new());
+                    let ty = ecx.monomorphize(local_decl.ty, instance.substs);
+                    let (alloc, val, style) = match val.map(|value| print_value(ecx, ty, value)) {
+                        Some(Ok((alloc, text))) => (alloc, text, ""),
+                        Some(Err(())) => (None, format!("{:?} does not exist", val), ""),
+                        None => (None, "&lt;uninit&gt;".to_owned(), "font-size: 0;"),
+                    };
+                    (name, ty.to_string(), alloc, val, style)
+                })
+                .collect()
+        },
+    );
 
     let (arg_count, var_count, tmp_count) = frame.map_or((0, 0, 0), |&Frame { ref mir, .. }| (
         mir.args_iter().count(),

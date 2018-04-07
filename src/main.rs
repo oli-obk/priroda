@@ -50,13 +50,9 @@ fn should_hide_stmt(stmt: &Statement) -> bool {
 type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, 'tcx, miri::Evaluator<'tcx>>;
 
 use rustc::session::Session;
-use rustc::hir::Crate;
 use rustc::ty::{self, TyCtxt, ParamEnv};
-use rustc::ty::layout::LayoutOf;
-use rustc::traits::Reveal;
 use rustc::mir::Statement;
 use rustc_driver::{driver, CompilerCalls};
-use syntax::ast::{MetaItemKind, NestedMetaItemKind};
 
 use std::sync::Mutex;
 use hyper::server::{Request, Response};
@@ -187,15 +183,24 @@ impl hyper::server::Service for Service {
     }
 }
 
+// Copied from miri/bin/miri.rs
 fn find_sysroot() -> String {
+    if let Ok(sysroot) = std::env::var("MIRI_SYSROOT") {
+        return sysroot;
+    }
+
     // Taken from https://github.com/Manishearth/rust-clippy/pull/911.
     let home = option_env!("RUSTUP_HOME").or(option_env!("MULTIRUST_HOME"));
     let toolchain = option_env!("RUSTUP_TOOLCHAIN").or(option_env!("MULTIRUST_TOOLCHAIN"));
     match (home, toolchain) {
         (Some(home), Some(toolchain)) => format!("{}/toolchains/{}", home, toolchain),
-        _ => option_env!("RUST_SYSROOT")
-            .expect("need to specify RUST_SYSROOT env var or use rustup or multirust")
-            .to_owned(),
+        _ => {
+            option_env!("RUST_SYSROOT")
+                .expect(
+                    "need to specify RUST_SYSROOT env var or use rustup or multirust",
+                )
+                .to_owned()
+        }
     }
 }
 
