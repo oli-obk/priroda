@@ -202,7 +202,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                             : "Breakpoints: "; br;
                             table(border="1") {
                                 @ for bp in rendered_breakpoints.iter() {
-                                    tr { 
+                                    tr {
                                         td { : bp }
                                         td { a(href=format!("/remove_breakpoint/{}", bp)) { : "remove" } }
                                     }
@@ -262,10 +262,19 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             (_, Some(Err(e))) => self.render_main_window(None, format!("not a number: {:?}", e)),
             (Some(Ok(alloc_id)), offset) => {
                 let offset = offset.unwrap_or(Ok(0)).expect("already checked in previous arm");
-                let (_, mem, bytes) = locals::print_ptr(&self.ecx, MemoryPointer {
-                    alloc_id: alloc_id,
-                    offset: offset,
-                }.into()).unwrap_or((None, "unknown memory".to_string(), 0));
+                let (mem, rest) =
+                    if let Ok((_, mem, bytes)) = locals::print_ptr(&self.ecx, MemoryPointer {
+                        alloc_id,
+                        offset,
+                }.into()) {
+                    if bytes * 2 > offset {
+                        (mem, (bytes * 2 - offset - 1) as usize)
+                    } else {
+                        ("out of bounds offset".to_string(), 0)
+                    }
+                } else {
+                    ("unknown memory".to_string(), 0)
+                };
                 self.promise.set(Html(box_html!{ html {
                     head {
                         title { : format!("Allocation {}", alloc_id) }
@@ -273,7 +282,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                     }
                     body {
                         span(style="font-family: monospace") {
-                            : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = (bytes * 2 - offset - 1) as usize)
+                            : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = rest)
                         }
                         br;
                         span(style="font-family: monospace") { : Raw(mem) }
