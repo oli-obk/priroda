@@ -133,7 +133,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 head {
                     title { : filename.to_str().unwrap() }
                     meta(charset = "UTF-8") {}
-                    script(type="text/javascript") { : Raw(include_str!("../../svg-pan-zoom/dist/svg-pan-zoom.js")) }
+                    script(type="text/javascript") { : Raw(include_str!("../../svg-pan-zoom.js")) }
                     script(type="text/javascript") { : Raw(include_str!("../../zoom_mir.js")) }
                 }
                 body(onload="enable_mir_mousewheel()") {

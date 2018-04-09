@@ -24,3 +24,6 @@ miri = { git = "https://github.com/bjorn3/miri.git", branch = "rustup" }
 # Uncomment to use local checkout of miri
 # [patch."https://github.com/bjorn3/miri.git"]
 # miri = { path = "../miri" }
+
+[target.heroku]
+version = "nightly"
