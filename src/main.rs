@@ -38,7 +38,7 @@ use miri::{
     AllocId,
     Place,
 };
-use step::Breakpoint;
+use step::{BreakpointTree, Breakpoint};
 
 use rustc_data_structures::indexed_vec::Idx;
 use rustc::session::Session;
@@ -48,7 +48,6 @@ use rustc::mir;
 use rustc_driver::{driver, CompilerCalls};
 
 use std::sync::Mutex;
-use std::collections::HashSet;
 use hyper::server::{Request, Response};
 use futures::future::FutureResult;
 
@@ -87,25 +86,25 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
     }
 }
 
-fn load_breakpoints_from_file() -> HashSet<Breakpoint> {
+fn load_breakpoints_from_file() -> BreakpointTree {
     use std::io::{BufRead, BufReader};
     use std::fs::File;
     match File::open("./.priroda_breakpoints") {
         Ok(file) => {
             let file = BufReader::new(file);
-            let mut breakpoints = HashSet::new();
+            let mut breakpoints = BreakpointTree::new();
             for line in file.lines() {
                 let line = line.expect("Couldn't read breakpoint from file");
                 if line.trim().is_empty() {
                     continue;
                 }
-                breakpoints.insert(parse_breakpoint_from_url(&format!("/set/{}", line)).unwrap());
+                breakpoints.add_breakpoint(parse_breakpoint_from_url(&format!("/set/{}", line)).unwrap());
             }
             breakpoints
         }
         Err(e) => {
             eprintln!("Couldn't load breakpoint file ./.priroda_breakpoints: {:?}", e);
-            HashSet::new()
+            BreakpointTree::new()
         }
     }
 }
@@ -168,7 +167,7 @@ fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> E
 
 fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     let mut ecx = create_ecx(session, tcx);
-    let mut breakpoints: HashSet<Breakpoint> = load_breakpoints_from_file();
+    let mut breakpoints = load_breakpoints_from_file();
 
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -213,7 +212,7 @@ fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
                 let res = parse_breakpoint_from_url(&path);
                 match res {
                     Ok(breakpoint) => {
-                        breakpoints.insert(breakpoint);
+                        breakpoints.add_breakpoint(breakpoint);
                         render_main_window!(None, format!("Breakpoint added for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
                     }
                     Err(e) => {
@@ -223,14 +222,14 @@ fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
             }
             Some("add_breakpoint_here") => {
                 let frame = ecx.frame();
-                breakpoints.insert(Breakpoint(frame.instance.def_id(), frame.block, frame.stmt));
+                breakpoints.add_breakpoint(Breakpoint(frame.instance.def_id(), frame.block, frame.stmt));
                 render_main_window!(None, format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), frame.block.index(), frame.stmt));
             }
             Some("remove_breakpoint") => {
                 let res = parse_breakpoint_from_url(&path);
                 match res {
                     Ok(breakpoint) => {
-                        if breakpoints.remove(&breakpoint) {
+                        if breakpoints.remove_breakpoint(breakpoint) {
                             render_main_window!(None, format!("Breakpoint removed for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
                         } else {
                             render_main_window!(None, format!("No breakpoint for for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
@@ -242,7 +241,7 @@ fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
                 }
             }
             Some("remove_all_breakpoints") => {
-                breakpoints.clear();
+                breakpoints.remove_all();
                 render_main_window!(None, format!("All breakpoints removed"));
             }
             Some("restart") => {

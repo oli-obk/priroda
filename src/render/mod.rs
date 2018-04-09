@@ -5,7 +5,7 @@ mod source;
 use promising_future::Promise;
 use super::{Page, EvalContext};
 use super::Page::*;
-use step::Breakpoint;
+use step::{BreakpointTree, Breakpoint};
 
 use miri::{
     Frame,
@@ -19,14 +19,13 @@ use rustc::session::Session;
 use rustc::ty::TyCtxt;
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 
 pub(crate) struct Renderer<'a, 'tcx: 'a> {
     pub promise: Promise<Page>,
     pub ecx: &'a EvalContext<'a, 'tcx>,
     pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
     pub session: &'a Session,
-    pub breakpoints: &'a HashSet<Breakpoint>,
+    pub breakpoints: &'a BreakpointTree,
 }
 
 impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
@@ -35,7 +34,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         ecx: &'a EvalContext<'a, 'tcx>,
         tcx: TyCtxt<'a, 'tcx, 'tcx>,
         session: &'a Session,
-        breakpoints: &'a HashSet<Breakpoint>,
+        breakpoints: &'a BreakpointTree,
     ) -> Self {
         Renderer {
             promise,
@@ -76,7 +75,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
 
         let mir_graph = frame.map(|frame| {
             let mut mir_graphviz = String::new();
-            graphviz::write(&frame.mir, frame.instance.def_id(), breakpoints, &mut mir_graphviz).unwrap();
+            graphviz::write(&frame.mir, breakpoints.for_def_id(frame.instance.def_id()), &mut mir_graphviz).unwrap();
             String::from_utf8(::cgraph::Graph::parse(mir_graphviz).unwrap().render_dot().unwrap()).unwrap()
         });
         let (bb, stmt) = frame.map_or((0, 0), |frame| {

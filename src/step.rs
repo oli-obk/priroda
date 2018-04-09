@@ -1,6 +1,7 @@
 use rustc::hir::def_id::DefId;
 use rustc::mir;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::iter::Iterator;
 
 use EvalContext;
 
@@ -12,14 +13,65 @@ pub enum ShouldContinue {
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct Breakpoint(pub DefId, pub mir::BasicBlock, pub usize);
 
-fn is_at_breakpoint(ecx: &EvalContext, breakpoints: &HashSet<Breakpoint>) -> bool {
-    let frame = ecx.frame();
-    breakpoints.iter().any(|&Breakpoint(def_id, bb, stmt)| {
-        frame.instance.def_id() == def_id && frame.block == bb && frame.stmt == stmt
-    })
+
+#[derive(Default)]
+pub struct BreakpointTree(HashMap<DefId, HashSet<Breakpoint>>);
+
+impl BreakpointTree {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn add_breakpoint(&mut self, bp: Breakpoint) {
+        self.0.entry(bp.0).or_insert(HashSet::new()).insert(bp);
+    }
+
+    pub fn remove_breakpoint(&mut self, bp: Breakpoint) -> bool{
+        self.0.get_mut(&bp.0).map(|local|local.remove(&bp)).unwrap_or(false)
+    }
+
+    pub fn remove_all(&mut self) {
+        self.0.clear();
+    }
+
+    pub fn for_def_id(&self, def_id: DefId) -> LocalBreakpoints {
+        if let Some(bps) = self.0.get(&def_id) {
+            LocalBreakpoints::SomeBps(bps)
+        } else {
+            LocalBreakpoints::NoBp
+        }
+    }
+
+    pub fn is_at_breakpoint(&self, ecx: &EvalContext) -> bool {
+        let frame = ecx.frame();
+        self.for_def_id(frame.instance.def_id()).breakpoint_exists(frame.block, frame.stmt)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Breakpoint> {
+        self.0.values().flat_map(|local| {
+            local.iter()
+        })
+    }
 }
 
-pub fn step_command(ecx: &mut EvalContext, breakpoints: &HashSet<Breakpoint>, cmd: &str) -> Option<String> {
+#[derive(Copy, Clone)]
+pub enum LocalBreakpoints<'a> {
+    NoBp,
+    SomeBps(&'a HashSet<Breakpoint>),
+}
+
+impl<'a> LocalBreakpoints<'a> {
+    pub fn breakpoint_exists(&self, bb: mir::BasicBlock, stmt: usize) -> bool {
+        match *self {
+            LocalBreakpoints::NoBp => false,
+            LocalBreakpoints::SomeBps(bps) => bps.iter().any(|bp| {
+                bp.1 == bb && bp.2 == stmt
+            })
+        }
+    }
+}
+
+pub fn step_command(ecx: &mut EvalContext, breakpoints: &BreakpointTree, cmd: &str) -> Option<String> {
     match cmd {
         "step" => {
             Some(step(ecx, breakpoints, |_ecx| ShouldContinue::Stop).unwrap_or_else(||String::new()))
@@ -56,7 +108,7 @@ pub fn step_command(ecx: &mut EvalContext, breakpoints: &HashSet<Breakpoint>, cm
     }
 }
 
-pub fn step<F>(ecx: &mut EvalContext, breakpoints: &HashSet<Breakpoint>, continue_while: F) -> Option<String>
+pub fn step<F>(ecx: &mut EvalContext, breakpoints: &BreakpointTree, continue_while: F) -> Option<String>
     where F: Fn(&EvalContext) -> ShouldContinue {
     let mut message = None;
     loop {
@@ -68,7 +120,7 @@ pub fn step<F>(ecx: &mut EvalContext, breakpoints: &HashSet<Breakpoint>, continu
                 if let Some(frame) = ecx.stack().last() {
                     let blck = &frame.mir.basic_blocks()[frame.block];
                     if frame.stmt != blck.statements.len() {
-                        if ::should_hide_stmt(&blck.statements[frame.stmt]) && !is_at_breakpoint(ecx, breakpoints) {
+                        if ::should_hide_stmt(&blck.statements[frame.stmt]) && !breakpoints.is_at_breakpoint(ecx) {
                             continue;
                         }
                     }
@@ -76,7 +128,7 @@ pub fn step<F>(ecx: &mut EvalContext, breakpoints: &HashSet<Breakpoint>, continu
                 if let ShouldContinue::Stop = continue_while(&*ecx) {
                     break;
                 }
-                if is_at_breakpoint(ecx, breakpoints) {
+                if breakpoints.is_at_breakpoint(ecx) {
                     break;
                 }
             }
