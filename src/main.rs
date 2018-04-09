@@ -175,12 +175,18 @@ fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
 
     let handle = std::thread::spawn(|| {
         // setup server
-        let addr = "127.0.0.1:54321".parse().unwrap();
+        let port = ::std::env::var("PORT").unwrap_or_else(|_|"54321".to_string());
+        let is_heroku = ::std::env::var("IS_ON_HEROKU").map_err(|_|()).and_then(|s|str::parse(&s).map_err(|_|())).unwrap_or(false);
+        let addr = if is_heroku {
+            format!("0.0.0.0:{}", port)
+        } else {
+            format!("127.0.0.1:{}", port)
+        }.parse().unwrap();
         let server = hyper::server::Http::new().bind(&addr, move || {
             Ok(Service(sender.lock().unwrap().clone()))
         }).expect("could not create http server");
         let addr = format!("http://{}", server.local_addr().unwrap());
-        if open::that(&addr).is_err() {
+        if is_heroku || open::that(&addr).is_err() {
             println!("open {} in your browser", addr);
         };
         server.run().unwrap()
