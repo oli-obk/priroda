@@ -12,8 +12,87 @@ use dot;
 use step::LocalBreakpoints;
 use rustc::mir::*;
 use std::fmt::{self, Debug, Write};
+use miri::Frame;
 
 use rustc_data_structures::indexed_vec::Idx;
+
+pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
+    let mut mir_graphviz = String::new();
+    write(&frame.mir, breakpoints, &mut mir_graphviz).unwrap();
+    let mut rendered = String::from_utf8(::cgraph::Graph::parse(mir_graphviz).unwrap().render_dot().unwrap()).unwrap();
+    let (bb, stmt) = {
+        let blck = &frame.mir.basic_blocks()[frame.block];
+        use rustc_data_structures::indexed_vec::Idx;
+        (
+            frame.block.index() + 1,
+            if frame.stmt == blck.statements.len() {
+                if blck.statements.is_empty() {
+                    6
+                } else {
+                    blck.statements.len() + 7
+                }
+            } else {
+                assert!(frame.stmt < blck.statements.len());
+                frame.stmt + 6
+            },
+        )
+    };
+    let edge_colors = {
+        let blck = &frame.mir.basic_blocks()[frame.block];
+        let (targets, unwind) = if frame.stmt == blck.statements.len() {
+            use rustc::mir::TerminatorKind::*;
+            match blck.terminator().kind {
+                Goto { target } => (vec![target], None),
+                SwitchInt { ref targets, .. } => (targets.to_vec(), None),
+                Drop { target, unwind, .. } |
+                DropAndReplace { target, unwind, .. } => (vec![target], unwind),
+                Call { ref destination, cleanup, .. } => {
+                    if let Some((_, target)) = *destination {
+                        (vec![target], cleanup)
+                    } else {
+                        (vec![], cleanup)
+                    }
+                }
+                _ => (vec![], None),
+            }
+        } else {
+            (vec![], None)
+        };
+        format!("let edge_colors = {{{}}};",
+            targets.into_iter().map(|target|(frame.block, target, "green"))
+                .chain(unwind.into_iter().map(|target|(frame.block, target, "red")))
+                .map(|(from, to, color)| format!("'bb{}->bb{}':'{}'", from.index(), to.index(), color))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    };
+    rendered.write_fmt(format_args!(r##"<style>
+        #node{} > text:nth-child({}) {{
+            fill: red;
+        }}
+        .edge-green > path, .edge-green > polygon, .edge-green > text {{
+            fill: green;
+            stroke: green;
+        }}
+        .edge-red > path, .edge-red > polygon, .edge-red > text {{
+            fill: red;
+            stroke: red;
+        }}
+        .edge > path {{
+            fill: none;
+        }}
+        </style>
+        <script>
+        {edge_colors}
+        for(let el of document.querySelectorAll("#mir > svg #graph0 .edge")) {{
+            let title = el.querySelector("title").textContent;
+            if(title in edge_colors) {{
+                el.classList.add("edge-" + edge_colors[title]);
+            }}
+        }}
+        </script>"##, bb, stmt, edge_colors = edge_colors)).unwrap();
+    rendered
+}
 
 /// Write a graphviz DOT graph of a list of MIRs.
 pub fn write<W: Write>(mir: &Mir, breakpoints: LocalBreakpoints, w: &mut W) -> fmt::Result {
