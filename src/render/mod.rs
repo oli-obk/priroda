@@ -189,18 +189,18 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             (_, Some(Err(e))) => self.render_main_window(None, format!("not a number: {:?}", e)),
             (Some(Ok(alloc_id)), offset) => {
                 let offset = offset.unwrap_or(Ok(0)).expect("already checked in previous arm");
-                let (mem, rest) =
+                let (mem, offset, rest) =
                     if let Ok((_, mem, bytes)) = locals::print_ptr(&self.ecx, MemoryPointer {
                         alloc_id,
                         offset,
                 }.into()) {
                     if bytes * 2 > offset {
-                        (mem, (bytes * 2 - offset - 1) as usize)
+                        (mem, offset, (bytes * 2 - offset - 1) as usize)
                     } else {
-                        ("out of bounds offset".to_string(), 0)
+                        ("out of bounds offset".to_string(), 0, 0)
                     }
                 } else {
-                    ("unknown memory".to_string(), 0)
+                    ("unknown memory".to_string(), 0, 0)
                 };
                 self.promise.set(Html(box_html!{ html {
                     head {
