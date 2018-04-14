@@ -17,9 +17,12 @@ use miri::Frame;
 use rustc_data_structures::indexed_vec::Idx;
 
 pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
-    let mut mir_graphviz = String::new();
-    write(&frame.mir, breakpoints, &mut mir_graphviz).unwrap();
-    let mut rendered = String::from_utf8(::cgraph::Graph::parse(mir_graphviz).unwrap().render_dot().unwrap()).unwrap();
+    let mut rendered = String::new();
+    render_mir_svg(frame, &frame.mir, breakpoints, &mut rendered, None).unwrap();
+    for (i, promoted) in frame.mir.promoted.iter_enumerated() {
+        println!("promoted: {:?}", i);
+        render_mir_svg(frame, promoted, breakpoints, &mut rendered, Some(i.index())).unwrap();
+    }
     let (bb, stmt) = {
         let blck = &frame.mir.basic_blocks()[frame.block];
         use rustc_data_structures::indexed_vec::Idx;
@@ -95,54 +98,51 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
 }
 
 /// Write a graphviz DOT graph of a list of MIRs.
-pub fn write<W: Write>(mir: &Mir, breakpoints: LocalBreakpoints, w: &mut W) -> fmt::Result {
-    writeln!(w, "digraph Mir {{")?;
+pub fn render_mir_svg<W: Write>(frame: &Frame, mir: &Mir, breakpoints: LocalBreakpoints, w: &mut W, promoted: Option<usize>) -> fmt::Result {
+    let mut dot = String::new();
+    if let Some(promoted) = promoted {
+        writeln!(dot, "digraph promoted{} {{", promoted)?;
+    } else {
+        writeln!(dot, "digraph Mir {{")?;
+    }
 
     // Global graph properties
-    writeln!(w, r#"    graph [fontname="monospace"];"#)?;
-    writeln!(w, r#"    node [fontname="monospace"];"#)?;
-    writeln!(w, r#"    edge [fontname="monospace"];"#)?;
+    writeln!(dot, r#"    graph [fontname="monospace"];"#)?;
+    writeln!(dot, r#"    node [fontname="monospace"];"#)?;
+    writeln!(dot, r#"    edge [fontname="monospace"];"#)?;
 
     // Nodes
     for (block, _) in mir.basic_blocks().iter_enumerated() {
-        write_node(block, mir, breakpoints, w)?;
+        write_node(block, mir, breakpoints, promoted, &mut dot)?;
     }
 
     // Edges
     for (source, _) in mir.basic_blocks().iter_enumerated() {
-        write_edges(source, mir, w)?;
+        write_edges(source, mir, &mut dot)?;
     }
-    writeln!(w, "}}")
+    writeln!(dot, "}}")?;
+    w.write_str(::std::str::from_utf8(&::cgraph::Graph::parse(dot).unwrap().render_dot().unwrap()).unwrap())
 }
 
 /// Write a graphviz HTML-styled label for the given basic block, with
 /// all necessary escaping already performed. (This is suitable for
 /// emitting directly, as is done in this module, or for use with the
 /// `LabelText::HtmlStr` from libgraphviz.)
-///
-/// `init` and `fini` are callbacks for emitting additional rows of
-/// data (using HTML enclosed with `<tr>` in the emitted text).
-pub fn write_node_label<W: Write, INIT, FINI>(block: BasicBlock,
-                                              mir: &Mir,
-                                              breakpoints: LocalBreakpoints,
-                                              w: &mut W,
-                                              num_cols: u32,
-                                              init: INIT,
-                                              fini: FINI) -> fmt::Result
-    where INIT: Fn(&mut W) -> fmt::Result,
-          FINI: Fn(&mut W) -> fmt::Result
-{
+fn write_node_label<W: Write>(
+    block: BasicBlock,
+    mir: &Mir,
+    breakpoints: LocalBreakpoints,
+    promoted: Option<usize>,
+    w: &mut W,
+) -> fmt::Result {
     let data = &mir[block];
 
     write!(w, r#"<table border="0" cellborder="1" cellspacing="0">"#)?;
 
     // Basic block number at the top.
-    write!(w, r#"<tr><td {attrs} colspan="{colspan}">{blk}</td></tr>"#,
+    write!(w, r#"<tr><td {attrs}>{blk}</td></tr>"#,
            attrs=r#"bgcolor="gray" align="center""#,
-           colspan=num_cols,
-           blk=block.index())?;
-
-    init(w)?;
+           blk=node(promoted, block))?;
 
     // List of statements in the middle.
     if !data.statements.is_empty() {
@@ -168,17 +168,15 @@ pub fn write_node_label<W: Write, INIT, FINI>(block: BasicBlock,
     data.terminator().kind.fmt_head(&mut terminator_head).unwrap();
     write!(w, r#"<tr><td align="left">{}</td></tr>"#, dot::escape_html(&terminator_head))?;
 
-    fini(w)?;
-
     // Close the table
     writeln!(w, "</table>")
 }
 
 /// Write a graphviz DOT node for the given basic block.
-fn write_node<W: Write>(block: BasicBlock, mir: &Mir, breakpoints: LocalBreakpoints, w: &mut W) -> fmt::Result {
+fn write_node<W: Write>(block: BasicBlock, mir: &Mir, breakpoints: LocalBreakpoints, promoted: Option<usize>, w: &mut W) -> fmt::Result {
     // Start a new node with the label to follow, in one of DOT's pseudo-HTML tables.
-    write!(w, r#"    {} [shape="none", label=<"#, node(block))?;
-    write_node_label(block, mir, breakpoints, w, 1, |_| Ok(()), |_| Ok(()))?;
+    write!(w, r#"    "{}" [shape="none", label=<"#, node(promoted, block))?;
+    write_node_label(block, mir, breakpoints, promoted, w)?;
     // Close the node label and the node itself.
     writeln!(w, ">];")
 }
@@ -189,14 +187,18 @@ fn write_edges<W: Write>(source: BasicBlock, mir: &Mir, w: &mut W) -> fmt::Resul
     let labels = terminator.kind.fmt_successor_labels();
 
     for (&target, label) in terminator.successors().iter().zip(labels) {
-        writeln!(w, r#"    {} -> {} [label="{}"];"#, node(source), node(target), label)?;
+        writeln!(w, r#"    {} -> {} [label="{}"];"#, node(None, source), node(None, target), label)?;
     }
 
     Ok(())
 }
 
-fn node(block: BasicBlock) -> String {
-    format!("bb{}", block.index())
+fn node(promoted: Option<usize>, block: BasicBlock) -> String {
+    if let Some(promoted) = promoted {
+        format!("promoted{}.{}", promoted, block.index())
+    } else {
+        format!("bb{}", block.index())
+    }
 }
 
 fn escape<T: Debug>(t: &T) -> String {

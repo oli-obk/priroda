@@ -1,5 +1,3 @@
-#![feature(termination_trait)]
-
 fn return_42() -> u64 {
     42
 }
