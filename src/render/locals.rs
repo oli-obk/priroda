@@ -1,5 +1,5 @@
 use rustc_data_structures::indexed_vec::Idx;
-use rustc::ty::{TyCtxt, Ty, TyS, TypeVariants, TypeAndMut};
+use rustc::ty::{Ty, TyS, TypeVariants, TypeAndMut};
 use rustc::mir;
 
 use miri::{
@@ -14,7 +14,7 @@ use horrorshow::Template;
 
 use EvalContext;
 
-pub fn render_locals<'a, 'tcx: 'a>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, ecx: &EvalContext<'a, 'tcx>, frame: Option<&Frame<'tcx, 'tcx>>) -> String {
+pub fn render_locals<'a, 'tcx: 'a>(ecx: &EvalContext<'a, 'tcx>, frame: Option<&Frame<'tcx, 'tcx>>) -> String {
     //               name    ty      alloc        val     style
     let locals: Vec<(String, String, Option<u64>, String, &str)> = frame.map_or(
         Vec::new(),

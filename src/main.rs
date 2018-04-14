@@ -61,6 +61,25 @@ fn should_hide_stmt(stmt: &mir::Statement) -> bool {
 
 type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, 'tcx, miri::Evaluator<'tcx>>;
 
+pub struct PrirodaContext<'a, 'tcx: 'a> {
+    ecx: EvalContext<'a, 'tcx>,
+    bptree: BreakpointTree,
+}
+
+impl<'a, 'tcx: 'a> std::ops::Deref for PrirodaContext<'a, 'tcx> {
+    type Target = EvalContext<'a, 'tcx>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ecx
+    }
+}
+
+impl<'a, 'tcx: 'a> std::ops::DerefMut for PrirodaContext<'a, 'tcx> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ecx
+    }
+}
+
 enum Page {
     Html(Box<RenderBox + Send>),
 }
@@ -166,8 +185,9 @@ fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> E
 }
 
 fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    let mut ecx = create_ecx(session, tcx);
-    let mut breakpoints = load_breakpoints_from_file();
+    let ecx = create_ecx(session, tcx);
+    let bptree = load_breakpoints_from_file();
+    let mut pcx = PrirodaContext { ecx, bptree };
 
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -195,7 +215,7 @@ fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     // process commands
     for (path, promise) in receiver {
         macro renderer() {
-            Renderer::new(promise, &ecx, tcx, session, &breakpoints)
+            Renderer::new(promise, &pcx, session)
         }
         macro render_main_window($frame:expr, $msg:expr) {
             renderer!().render_main_window($frame, $msg);
@@ -218,7 +238,7 @@ fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
                 let res = parse_breakpoint_from_url(&path);
                 match res {
                     Ok(breakpoint) => {
-                        breakpoints.add_breakpoint(breakpoint);
+                        pcx.bptree.add_breakpoint(breakpoint);
                         render_main_window!(None, format!("Breakpoint added for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
                     }
                     Err(e) => {
@@ -227,15 +247,15 @@ fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
                 }
             }
             Some("add_breakpoint_here") => {
-                let frame = ecx.frame();
-                breakpoints.add_breakpoint(Breakpoint(frame.instance.def_id(), frame.block, frame.stmt));
+                let frame = pcx.ecx.frame();
+                pcx.bptree.add_breakpoint(Breakpoint(frame.instance.def_id(), frame.block, frame.stmt));
                 render_main_window!(None, format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), frame.block.index(), frame.stmt));
             }
             Some("remove_breakpoint") => {
                 let res = parse_breakpoint_from_url(&path);
                 match res {
                     Ok(breakpoint) => {
-                        if breakpoints.remove_breakpoint(breakpoint) {
+                        if pcx.bptree.remove_breakpoint(breakpoint) {
                             render_main_window!(None, format!("Breakpoint removed for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
                         } else {
                             render_main_window!(None, format!("No breakpoint for for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
@@ -247,15 +267,15 @@ fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
                 }
             }
             Some("remove_all_breakpoints") => {
-                breakpoints.remove_all();
+                pcx.bptree.remove_all();
                 render_main_window!(None, format!("All breakpoints removed"));
             }
             Some("restart") => {
-                ecx = create_ecx(session, tcx);
+                pcx.ecx = create_ecx(session, tcx);
                 render_main_window!(None, String::new());
             }
             Some(cmd) => {
-                if let Some(message) = ::step::step_command(&mut ecx, &breakpoints, cmd) {
+                if let Some(message) = ::step::step_command(&mut pcx, cmd) {
                     render_main_window!(None, message);
                 } else {
                     render_main_window!(None, format!("unknown command: {}", cmd));

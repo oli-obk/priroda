@@ -3,9 +3,9 @@ mod locals;
 mod source;
 
 use promising_future::Promise;
-use super::{Page, EvalContext};
+use super::{Page, PrirodaContext};
 use super::Page::*;
-use step::{BreakpointTree, Breakpoint};
+use step::Breakpoint;
 
 use miri::{
     Frame,
@@ -16,32 +16,25 @@ use miri::{
 
 use rustc::hir::map::definitions::DefPathData;
 use rustc::session::Session;
-use rustc::ty::TyCtxt;
 
 use std::borrow::Cow;
 
 pub(crate) struct Renderer<'a, 'tcx: 'a> {
     pub promise: Promise<Page>,
-    pub ecx: &'a EvalContext<'a, 'tcx>,
-    pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    pub pcx: &'a PrirodaContext<'a, 'tcx>,
     pub session: &'a Session,
-    pub breakpoints: &'a BreakpointTree,
 }
 
 impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
     pub fn new(
         promise: Promise<Page>,
-        ecx: &'a EvalContext<'a, 'tcx>,
-        tcx: TyCtxt<'a, 'tcx, 'tcx>,
+        pcx: &'a PrirodaContext<'a, 'tcx>,
         session: &'a Session,
-        breakpoints: &'a BreakpointTree,
     ) -> Self {
         Renderer {
             promise,
-            ecx,
-            tcx,
+            pcx,
             session,
-            breakpoints,
         }
     }
     pub fn render_main_window<MSG: Into<Cow<'static, str>>>(
@@ -49,17 +42,17 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         display_frame: Option<usize>,
         message: MSG,
     ) {
-        let Renderer { promise, ecx, tcx, session, breakpoints } = self;
+        let Renderer { promise, pcx, session } = self;
         let message = message.into().into_owned();
         let is_active_stack_frame = match display_frame {
-            Some(n) => n == ecx.stack().len() - 1,
+            Some(n) => n == pcx.stack().len() - 1,
             None => true,
         };
-        let frame = display_frame.and_then(|frame| ecx.stack().get(frame)).or_else(|| ecx.stack().last());
+        let frame = display_frame.and_then(|frame| pcx.stack().get(frame)).or_else(|| pcx.stack().last());
         let filename = session.local_crate_source_file.clone().unwrap_or_else(|| "no file name".to_string().into());
-        let stack: Vec<(String, String, String)> = ecx.stack().iter().map(|&Frame { instance, span, .. } | {
+        let stack: Vec<(String, String, String)> = pcx.stack().iter().map(|&Frame { instance, span, .. } | {
             (
-                if tcx.def_key(instance.def_id()).disambiguated_data.data == DefPathData::ClosureExpr {
+                if pcx.tcx.def_key(instance.def_id()).disambiguated_data.data == DefPathData::ClosureExpr {
                     "inside call to closure".to_string()
                 } else {
                     instance.to_string()
@@ -68,13 +61,13 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 format!("{:?}", instance.def_id()),
             )
         }).collect();
-        let rendered_breakpoints: Vec<String> = breakpoints.iter().map(|&Breakpoint(def_id, bb, stmt)| format!("{:?}@{}:{}", def_id, bb.index(), stmt)).collect();
+        let rendered_breakpoints: Vec<String> = pcx.bptree.iter().map(|&Breakpoint(def_id, bb, stmt)| format!("{:?}@{}:{}", def_id, bb.index(), stmt)).collect();
         use rustc_data_structures::indexed_vec::Idx;
-        let rendered_locals = locals::render_locals(self.tcx, self.ecx, frame);
-        let rendered_source = source::render_source(self.tcx, frame);
+        let rendered_locals = locals::render_locals(pcx, frame);
+        let rendered_source = source::render_source(*self.pcx.tcx, frame);
 
         let mir_graph = frame.map(|frame| {
-            graphviz::render_html(frame, breakpoints.for_def_id(frame.instance.def_id()))
+            graphviz::render_html(frame, pcx.bptree.for_def_id(frame.instance.def_id()))
         });
 
         println!("running horrorshow");
@@ -155,7 +148,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         match alloc_id {
             Some(Err(e)) => self.render_main_window(None, format!("not a number: {:?}", e)),
             Some(Ok(alloc_id)) => {
-                let allocs: Vec<_> = self.ecx.memory().allocations().filter_map(|(id, alloc)| {
+                let allocs: Vec<_> = self.pcx.memory().allocations().filter_map(|(id, alloc)| {
                     alloc.relocations
                          .values()
                          .find(|reloc| reloc.0 == alloc_id)
@@ -190,7 +183,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
             (Some(Ok(alloc_id)), offset) => {
                 let offset = offset.unwrap_or(Ok(0)).expect("already checked in previous arm");
                 let (mem, offset, rest) =
-                    if let Ok((_, mem, bytes)) = locals::print_ptr(&self.ecx, MemoryPointer {
+                    if let Ok((_, mem, bytes)) = locals::print_ptr(&*self.pcx, MemoryPointer {
                         alloc_id,
                         offset,
                 }.into()) {

@@ -3,7 +3,7 @@ use rustc::mir;
 use std::collections::{HashMap, HashSet};
 use std::iter::Iterator;
 
-use EvalContext;
+use {EvalContext, PrirodaContext};
 
 pub enum ShouldContinue {
     Continue,
@@ -71,16 +71,16 @@ impl<'a> LocalBreakpoints<'a> {
     }
 }
 
-pub fn step_command(ecx: &mut EvalContext, breakpoints: &BreakpointTree, cmd: &str) -> Option<String> {
+pub fn step_command(pcx: &mut PrirodaContext, cmd: &str) -> Option<String> {
     match cmd {
         "step" => {
-            Some(step(ecx, breakpoints, |_ecx| ShouldContinue::Stop).unwrap_or_else(||String::new()))
+            Some(step(pcx, |_ecx| ShouldContinue::Stop).unwrap_or_else(||String::new()))
         },
         "next" => {
-            let frame = ecx.stack().len();
-            let stmt = ecx.frame().stmt;
-            let block = ecx.frame().block;
-            let message = step(ecx, breakpoints, |ecx| {
+            let frame = pcx.stack().len();
+            let stmt = pcx.frame().stmt;
+            let block = pcx.frame().block;
+            let message = step(pcx, |ecx| {
                 if ecx.stack().len() <= frame && (block < ecx.frame().block || stmt < ecx.frame().stmt) {
                     ShouldContinue::Stop
                 } else {
@@ -90,8 +90,8 @@ pub fn step_command(ecx: &mut EvalContext, breakpoints: &BreakpointTree, cmd: &s
             Some(message.unwrap_or_else(||String::new()))
         },
         "return" => {
-            let frame = ecx.stack().len();
-            let message = step(ecx, breakpoints, |ecx| {
+            let frame = pcx.stack().len();
+            let message = step(pcx, |ecx| {
                 if ecx.stack().len() <= frame && is_ret(&ecx) {
                     ShouldContinue::Stop
                 } else {
@@ -101,34 +101,34 @@ pub fn step_command(ecx: &mut EvalContext, breakpoints: &BreakpointTree, cmd: &s
             Some(message.unwrap_or_else(||String::new()))
         }
         "continue" => {
-            let message = step(ecx, breakpoints, |_ecx| ShouldContinue::Continue);
+            let message = step(pcx, |_ecx| ShouldContinue::Continue);
             Some(message.unwrap_or_else(||String::new()))
         },
         _ => None
     }
 }
 
-pub fn step<F>(ecx: &mut EvalContext, breakpoints: &BreakpointTree, continue_while: F) -> Option<String>
+pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> Option<String>
     where F: Fn(&EvalContext) -> ShouldContinue {
     let mut message = None;
     loop {
-        if ecx.stack().len() <= 1 && is_ret(&ecx) {
+        if pcx.stack().len() <= 1 && is_ret(&*pcx) {
             break;
         }
-        match ecx.step() {
+        match pcx.step() {
             Ok(true) => {
-                if let Some(frame) = ecx.stack().last() {
+                if let Some(frame) = pcx.stack().last() {
                     let blck = &frame.mir.basic_blocks()[frame.block];
                     if frame.stmt != blck.statements.len() {
-                        if ::should_hide_stmt(&blck.statements[frame.stmt]) && !breakpoints.is_at_breakpoint(ecx) {
+                        if ::should_hide_stmt(&blck.statements[frame.stmt]) && !pcx.bptree.is_at_breakpoint(&*pcx) {
                             continue;
                         }
                     }
                 }
-                if let ShouldContinue::Stop = continue_while(&*ecx) {
+                if let ShouldContinue::Stop = continue_while(&*pcx) {
                     break;
                 }
-                if breakpoints.is_at_breakpoint(ecx) {
+                if pcx.bptree.is_at_breakpoint(pcx) {
                     break;
                 }
             }
