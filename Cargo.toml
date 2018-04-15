@@ -20,6 +20,8 @@ syntect = "2.0.0"
 lazy_static = "1.0.0"
 cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "b65e460ee323b31dca55b5541141a6b73272e72a" }
 miri = { git = "https://github.com/bjorn3/miri.git", branch = "rustup" }
+rocket = "0.3.8"
+rocket_codegen = "0.3.8"
 
 # Uncomment to use local checkout of miri
 # [patch."https://github.com/bjorn3/miri.git"]

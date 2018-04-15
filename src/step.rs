@@ -1,3 +1,4 @@
+use rustc_data_structures::indexed_vec::Idx;
 use rustc::hir::def_id::DefId;
 use rustc::mir;
 use std::collections::{HashMap, HashSet};
@@ -155,5 +156,130 @@ pub fn is_ret(ecx: &EvalContext) -> bool {
         }
     } else {
         true
+    }
+}
+
+pub fn load_breakpoints_from_file() -> BreakpointTree {
+    use std::io::{BufRead, BufReader};
+    use std::fs::File;
+    match File::open("./.priroda_breakpoints") {
+        Ok(file) => {
+            let file = BufReader::new(file);
+            let mut breakpoints = BreakpointTree::new();
+            for line in file.lines() {
+                let line = line.expect("Couldn't read breakpoint from file");
+                if line.trim().is_empty() {
+                    continue;
+                }
+                breakpoints.add_breakpoint(parse_breakpoint_from_url(&format!("/set/{}", line)).unwrap());
+            }
+            breakpoints
+        }
+        Err(e) => {
+            eprintln!("Couldn't load breakpoint file ./.priroda_breakpoints: {:?}", e);
+            BreakpointTree::new()
+        }
+    }
+}
+
+fn parse_breakpoint_from_url(s: &str) -> Result<Breakpoint, String> {
+    use rustc::hir::def_id::{CrateNum, DefId, DefIndex, DefIndexAddressSpace};
+    let regex = ::regex::Regex::new(r#"DefId\((\d+)/(0|1):(\d+) ~ [^\)]+\)@(\d+):(\d+)"#).unwrap();
+    // my_command/DefId(1/0:14824 ~ mycrate::main)@1:3
+    //                  ^ ^ ^                      ^ ^
+    //                  | | |                      | statement
+    //                  | | |                      BasicBlock
+    //                  | | DefIndex::as_array_index()
+    //                  | DefIndexAddressSpace
+    //                  CrateNum
+
+    let s = s.replace("%20", " ");
+    let caps = regex.captures(&s).ok_or_else(||format!("Invalid breakpoint {}", s))?;
+
+    // Parse DefId
+    let crate_num = CrateNum::new(caps.get(1).unwrap().as_str().parse::<usize>().unwrap());
+    let address_space = match caps.get(2).unwrap().as_str().parse::<u64>().unwrap() {
+        0 => DefIndexAddressSpace::Low,
+        1 => DefIndexAddressSpace::High,
+        _ => return Err("address_space is not 0 or 1".to_string()),
+    };
+    let index = caps.get(3).unwrap().as_str().parse::<usize>().map_err(|_| "index is not a positive integer")?;
+    let def_index = DefIndex::from_array_index(index, address_space);
+    let def_id = DefId {
+        krate: crate_num,
+        index: def_index,
+    };
+
+    // Parse block and stmt
+    let bb = mir::BasicBlock::new(caps.get(4).unwrap().as_str().parse::<usize>().map_err(|_| "block id is not a positive integer")?);
+    let stmt = caps.get(5).unwrap().as_str().parse::<usize>().map_err(|_| "stmt id is not a positive integer")?;
+
+    Ok(Breakpoint(def_id, bb, stmt))
+}
+
+pub mod routes {
+    use super::*;
+    use std::path::PathBuf;
+    use {PrirodaSender, do_work_and_redirect};
+    use rocket::State;
+    use rocket::response::{Flash, Redirect};
+
+    pub fn routes() -> Vec<::rocket::Route> {
+        routes! [
+            add_here,
+            add,
+            remove,
+            remove_all,
+        ]
+    }
+
+    #[get("/add_here")]
+    fn add_here(sender: State<PrirodaSender>) -> Flash<Redirect> {
+        do_work_and_redirect!(sender, |pcx| {
+            let frame = pcx.ecx.frame();
+            pcx.bptree.add_breakpoint(Breakpoint(frame.instance.def_id(), frame.block, frame.stmt));
+            format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), frame.block.index(), frame.stmt)
+        })
+    }
+
+    #[get("/add/<path..>")]
+    fn add(path: PathBuf, sender: State<PrirodaSender>) -> Flash<Redirect>{
+        do_work_and_redirect!(sender, |pcx| {
+            let path = path.to_string_lossy();
+            let res = parse_breakpoint_from_url(&path);
+            match res {
+                Ok(breakpoint) => {
+                    pcx.bptree.add_breakpoint(breakpoint);
+                    format!("Breakpoint added for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
+                }
+                Err(e) => e,
+            }
+        })
+    }
+
+    #[get("/remove/<path..>")]
+    fn remove(path: PathBuf, sender: State<PrirodaSender>) -> Flash<Redirect>{
+        do_work_and_redirect!(sender, |pcx| {
+            let path = path.to_string_lossy();
+            let res = parse_breakpoint_from_url(&path);
+            match res {
+                Ok(breakpoint) => {
+                    if pcx.bptree.remove_breakpoint(breakpoint) {
+                        format!("Breakpoint removed for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
+                    } else {
+                        format!("No breakpoint for for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
+                    }
+                }
+                Err(e) => e,
+            }
+        })
+    }
+
+    #[get("/remove_all")]
+    fn remove_all(sender: State<PrirodaSender>) -> Flash<Redirect> {
+        do_work_and_redirect!(sender, |pcx| {
+            pcx.bptree.remove_all();
+            "All breakpoints removed".to_string()
+        })
     }
 }

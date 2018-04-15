@@ -1,7 +1,9 @@
-#![feature(rustc_private, custom_attribute, decl_macro)]
+#![feature(rustc_private, custom_attribute, decl_macro, plugin, fnbox)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
+#![plugin(rocket_codegen)]
 
+extern crate rocket;
 extern crate getopts;
 extern crate miri;
 extern crate rustc;
@@ -29,7 +31,12 @@ extern crate lazy_static;
 mod render;
 mod step;
 
-use horrorshow::prelude::*;
+use std::boxed::FnBox;
+use std::path::PathBuf;
+use rocket::State;
+use rocket::fairing::AdHoc;
+use rocket::response::{Flash, Redirect};
+use rocket::response::content::*;
 use promising_future::future_promise;
 
 use miri::{
@@ -37,18 +44,14 @@ use miri::{
     AllocId,
     Place,
 };
-use step::{BreakpointTree, Breakpoint};
+use step::BreakpointTree;
 
-use rustc_data_structures::indexed_vec::Idx;
 use rustc::session::Session;
 use rustc::ty::{self, TyCtxt, ParamEnv};
-use rustc::hir::def_id::{CrateNum, DefId, DefIndex, DefIndexAddressSpace};
 use rustc::mir;
 use rustc_driver::{driver, CompilerCalls};
 
 use std::sync::Mutex;
-use hyper::server::{Request, Response};
-use futures::future::FutureResult;
 
 fn should_hide_stmt(stmt: &mir::Statement) -> bool {
     use rustc::mir::StatementKind::*;
@@ -59,6 +62,8 @@ fn should_hide_stmt(stmt: &mir::Statement) -> bool {
 }
 
 type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, 'tcx, miri::Evaluator<'tcx>>;
+
+type PrirodaSender = Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>;
 
 pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: EvalContext<'a, 'tcx>,
@@ -92,70 +97,13 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
         control.after_analysis.callback = Box::new(|state| {
             state.session.abort_if_errors();
             let ecx = create_ecx(state.session, state.tcx.unwrap());
-            let bptree = load_breakpoints_from_file();
+            let bptree = step::load_breakpoints_from_file();
             let pcx = PrirodaContext{ ecx, bptree };
             act(pcx);
         });
 
         control
     }
-}
-
-fn load_breakpoints_from_file() -> BreakpointTree {
-    use std::io::{BufRead, BufReader};
-    use std::fs::File;
-    match File::open("./.priroda_breakpoints") {
-        Ok(file) => {
-            let file = BufReader::new(file);
-            let mut breakpoints = BreakpointTree::new();
-            for line in file.lines() {
-                let line = line.expect("Couldn't read breakpoint from file");
-                if line.trim().is_empty() {
-                    continue;
-                }
-                breakpoints.add_breakpoint(parse_breakpoint_from_url(&format!("/set/{}", line)).unwrap());
-            }
-            breakpoints
-        }
-        Err(e) => {
-            eprintln!("Couldn't load breakpoint file ./.priroda_breakpoints: {:?}", e);
-            BreakpointTree::new()
-        }
-    }
-}
-
-fn parse_breakpoint_from_url(s: &str) -> Result<Breakpoint, String> {
-    let regex = regex::Regex::new(r#"/\w+/DefId\((\d+)/(0|1):(\d+) ~ [^\)]+\)@(\d+):(\d+)"#).unwrap();
-    // my_command/DefId(1/0:14824 ~ mycrate::main)@1:3
-    //                  ^ ^ ^                      ^ ^
-    //                  | | |                      | statement
-    //                  | | |                      BasicBlock
-    //                  | | DefIndex::as_array_index()
-    //                  | DefIndexAddressSpace
-    //                  CrateNum
-
-    let s = s.replace("%20", " ");
-    let caps = regex.captures(&s).ok_or_else(||format!("Invalid breakpoint {}", s))?;
-
-    // Parse DefId
-    let crate_num = CrateNum::new(caps.get(1).unwrap().as_str().parse::<usize>().unwrap());
-    let address_space = match caps.get(2).unwrap().as_str().parse::<u64>().unwrap() {
-        0 => DefIndexAddressSpace::Low,
-        1 => DefIndexAddressSpace::High,
-        _ => return Err("address_space is not 0 or 1".to_string()),
-    };
-    let index = caps.get(3).unwrap().as_str().parse::<usize>().map_err(|_| "index is not a positive integer")?;
-    let def_index = DefIndex::from_array_index(index, address_space);
-    let def_id = DefId {
-        krate: crate_num,
-        index: def_index,
-    };
-
-    // Parse block and stmt
-    let bb = mir::BasicBlock::new(caps.get(4).unwrap().as_str().parse::<usize>().map_err(|_| "block id is not a positive integer")?);
-    let stmt = caps.get(5).unwrap().as_str().parse::<usize>().map_err(|_| "stmt id is not a positive integer")?;
-
-    Ok(Breakpoint(def_id, bb, stmt))
 }
 
 fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
@@ -180,139 +128,111 @@ fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> E
     ecx
 }
 
+macro do_work($sender:expr, |$pcx:ident| $body:block) {{
+    let (future, promise) = future_promise();
+    $sender.lock().unwrap().send(Box::new(move |$pcx: &mut PrirodaContext| {
+        promise.set({$body});
+    })).unwrap();
+    future.value().unwrap()
+}}
+
+macro do_work_and_redirect($sender:expr, |$pcx:ident| $body:block) {
+    do_work!($sender, |$pcx| {
+        Flash::success(Redirect::to("/"), {$body})
+    })
+}
+
+#[get("/")]
+fn index(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSender>) -> Html<String> {
+    do_work!(sender, |pcx| {
+        if let Some(flash) = flash {
+            render::set_flash_message(flash.msg().to_string());
+        }
+        render::render_main_window(pcx, None)
+    })
+}
+
+#[get("/frame/<frame>")]
+fn frame(sender: State<PrirodaSender>, frame: String) -> Result<Html<String>, Flash<Redirect>> {
+    do_work!(sender, |pcx| {
+        match frame.parse() {
+            Ok(n) => Ok(render::render_main_window(pcx, Some(n))),
+            Err(e) => Err(Flash::warning(Redirect::to("/"), format!("not a number: {:?}", e))),
+        }
+    })
+}
+
+#[get("/ptr/<path..>")]
+fn ptr(path: PathBuf, sender: State<PrirodaSender>) -> Html<String> {
+    do_work!(sender, |pcx| {
+        let path = path.to_string_lossy();
+        let mut matches = path.split('/');
+        render::render_ptr_memory(pcx, matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse))
+    })
+}
+
+#[get("/reverse_ptr/<ptr>")]
+fn reverse_ptr(ptr: String, sender: State<PrirodaSender>) -> Html<String> {
+    do_work!(sender, |pcx| {
+        render::render_reverse_ptr(pcx, Some(ptr.parse()))
+    })
+}
+
+#[get("/restart")]
+fn restart(sender: State<PrirodaSender>) -> Flash<Redirect> {
+    do_work_and_redirect!(sender, |pcx| {
+        pcx.ecx = create_ecx(pcx.tcx.sess, pcx.tcx.tcx);
+        "restarted"
+    })
+}
+
+#[get("/<path..>", rank = 42)]
+fn fallback(path: PathBuf, sender: State<PrirodaSender>) -> Flash<Redirect> {
+    do_work_and_redirect!(sender, |pcx| {
+        let path = path.to_string_lossy();
+        if let Some(message) = ::step::step_command(pcx, &*path) {
+            message
+        } else {
+            format!("unknown command: {}", path)
+        }
+    })
+}
+
 fn act<'a, 'tcx: 'a>(mut pcx: PrirodaContext<'a, 'tcx>) {
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
-    let sender = Mutex::new(sender);
+    let sender: Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>> = Mutex::new(sender);
 
     let handle = std::thread::spawn(|| {
-        // setup server
-        let port = ::std::env::var("PORT").unwrap_or_else(|_|"54321".to_string());
-        let is_heroku = ::std::env::var("IS_ON_HEROKU").map_err(|_|()).and_then(|s|str::parse(&s).map_err(|_|())).unwrap_or(false);
-        let addr = if is_heroku {
-            format!("0.0.0.0:{}", port)
-        } else {
-            format!("127.0.0.1:{}", port)
-        }.parse().unwrap();
-        let server = hyper::server::Http::new().bind(&addr, move || {
-            Ok(Service(sender.lock().unwrap().clone()))
-        }).expect("could not create http server");
-        let addr = format!("http://{}", server.local_addr().unwrap());
-        if is_heroku || open::that(&addr).is_err() {
-            println!("open {} in your browser", addr);
-        };
-        server.run().unwrap()
+        use rocket::config::Value;
+        rocket::ignite()
+            .manage(sender)
+            .mount("/", routes![
+                index,
+                frame,
+                restart,
+                ptr,
+                reverse_ptr,
+                fallback,
+            ])
+            .mount("breakpoints", step::routes::routes())
+            .attach(AdHoc::on_launch(|rocket| {
+                let config = rocket.config();
+                if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {
+                    let addr = format!("http://{}:{}", config.address, config.port);
+                    if open::that(&addr).is_err() {
+                        println!("open {} in your browser", addr);
+                    }
+                }
+            }))
+            .launch();
     });
 
     // process commands
-    for (path, promise) in receiver {
-        macro render_main_window($frame:expr) {
-            promise.set(render::render_main_window(&pcx, $frame));
-        }
-
-        println!("processing `{}`", path);
-        assert_eq!(&path[..1], "/");
-        let mut matches = path[1..].split('/');
-        match matches.next() {
-            Some("") | None => render_main_window!(None),
-            Some("reverse_ptr") => promise.set(render::render_reverse_ptr(&pcx, matches.next().map(str::parse))),
-            Some("ptr") => promise.set(render::render_ptr_memory(&pcx, matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse))),
-            Some("frame") => match matches.next().map(str::parse) {
-                Some(Ok(n)) => render_main_window!(Some(n)),
-                Some(Err(e)) => {
-                    render::set_flash_message(format!("not a number: {:?}", e));
-                    render_main_window!(None);
-                }
-                // display current frame
-                None => render_main_window!(None),
-            },
-            Some("add_breakpoint") => {
-                let res = parse_breakpoint_from_url(&path);
-                match res {
-                    Ok(breakpoint) => {
-                        pcx.bptree.add_breakpoint(breakpoint);
-                        render::set_flash_message(format!("Breakpoint added for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
-                        render_main_window!(None);
-                    }
-                    Err(e) => {
-                        render::set_flash_message(e.to_string());
-                        render_main_window!(None);
-                    }
-                }
-            }
-            Some("add_breakpoint_here") => {
-                let frame = pcx.ecx.frame();
-                pcx.bptree.add_breakpoint(Breakpoint(frame.instance.def_id(), frame.block, frame.stmt));
-                render::set_flash_message(format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), frame.block.index(), frame.stmt));
-                render_main_window!(None);
-            }
-            Some("remove_breakpoint") => {
-                let res = parse_breakpoint_from_url(&path);
-                match res {
-                    Ok(breakpoint) => {
-                        if pcx.bptree.remove_breakpoint(breakpoint) {
-                            render::set_flash_message(format!("Breakpoint removed for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
-                            render_main_window!(None);
-                        } else {
-                            render::set_flash_message(format!("No breakpoint for for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
-                            render_main_window!(None);
-                        }
-                    }
-                    Err(e) => {
-                        render::set_flash_message(e.to_string());
-                        render_main_window!(None);
-                    }
-                }
-            }
-            Some("remove_all_breakpoints") => {
-                pcx.bptree.remove_all();
-                render::set_flash_message(format!("All breakpoints removed"));
-                render_main_window!(None);
-            }
-            Some("restart") => {
-                pcx.ecx = create_ecx(pcx.tcx.sess, pcx.tcx.tcx);
-                render_main_window!(None);
-            }
-            Some(cmd) => {
-                if let Some(message) = ::step::step_command(&mut pcx, cmd) {
-                    render::set_flash_message(message);
-                    render_main_window!(None);
-                } else {
-                    render::set_flash_message(format!("unknown command: {}", cmd));
-                    render_main_window!(None);
-                }
-            }
-        }
+    for command in receiver {
+        command.call_box((&mut pcx,));
     }
     handle.join().unwrap();
-}
-
-struct Service(std::sync::mpsc::Sender<(String, promising_future::Promise<Box<RenderBox + Send>>)>);
-
-impl hyper::server::Service for Service {
-    type Request = Request;
-    type Response = Response;
-    type Error = hyper::Error;
-    type Future = FutureResult<Response, hyper::Error>;
-
-    fn call(&self, req: Request) -> Self::Future {
-        let (future, promise) = future_promise::<Box<RenderBox + Send>>();
-        self.0.send((req.path().to_string(), promise)).unwrap();
-        println!("got `{}`", req.path());
-        futures::future::ok(match future.value() {
-            Some(output) => {
-                println!("rendering page");
-                let mut text = Vec::new();
-                output.write_to_io(&mut text).unwrap();
-                println!("sending page");
-                Response::new()
-                    .with_header(hyper::header::ContentLength(text.len() as u64))
-                    .with_body(text)
-            }
-            None => Response::new()
-                    .with_status(hyper::StatusCode::NotFound)
-        })
-    }
 }
 
 // Copied from miri/bin/miri.rs

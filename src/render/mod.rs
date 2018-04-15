@@ -2,7 +2,8 @@ mod graphviz;
 mod locals;
 mod source;
 
-use horrorshow::prelude::RenderBox;
+use rocket::response::content::Html;
+use horrorshow::Template;
 use PrirodaContext;
 use step::Breakpoint;
 
@@ -27,7 +28,7 @@ pub fn set_flash_message(msg: String) {
 pub fn render_main_window(
     pcx: &PrirodaContext,
     display_frame: Option<usize>,
-) -> Box<RenderBox + Send> {
+) -> Html<String> {
     let message = FLASH_MESSAGE.with(|key| key.replace(String::new()));
     let is_active_stack_frame = match display_frame {
         Some(n) => n == pcx.stack().len() - 1,
@@ -57,7 +58,8 @@ pub fn render_main_window(
 
     println!("running horrorshow");
     use horrorshow::Raw;
-    box_html! {
+    let mut buf = String::new();
+    (html! {
         html {
             head {
                 title { : filename.to_str().unwrap() }
@@ -76,8 +78,8 @@ pub fn render_main_window(
                             a(href="/return") { div(title="Run until the function returns") { : "Return" } }
                             a(href="/continue") { div(title="Run until termination or breakpoint") { : "Continue" } }
                             a(href="/restart") { div(title="Abort execution and restart") { : "Restart" } }
-                            a(href="/add_breakpoint_here") { div(title="Add breakpoint at current location") { : "Add breakpoint here"} }
-                            a(href="/remove_all_breakpoints") { div(title="Remove all breakpoints") { : "Remove all breakpoints"} }
+                            a(href="/breakpoints/add_here") { div(title="Add breakpoint at current location") { : "Add breakpoint here"} }
+                            a(href="/breakpoints/remove_all") { div(title="Remove all breakpoints") { : "Remove all breakpoints"} }
                         } else {
                             a(href="/") { div(title="Go to active stack frame") { : "Go back to active stack frame" } }
                         }
@@ -109,7 +111,7 @@ pub fn render_main_window(
                             @ for bp in rendered_breakpoints.iter() {
                                 tr {
                                     td { : bp }
-                                    td { a(href=format!("/remove_breakpoint/{}", bp)) { : "remove" } }
+                                    td { a(href=format!("/breakpoints/remove/{}", bp)) { : "remove" } }
                                 }
                             }
                         }
@@ -123,13 +125,15 @@ pub fn render_main_window(
                 }
             }
         }
-    }
+    }).write_to_string(&mut buf).unwrap();
+    Html(buf)
 }
 
 pub fn render_reverse_ptr<ERR: ::std::fmt::Debug>(
     pcx: &PrirodaContext,
     alloc_id: Option<Result<u64, ERR>>,
-) -> Box<RenderBox + Send> {
+) -> Html<String> {
+    let mut buf = String::new();
     match alloc_id {
         Some(Err(e)) => {
             set_flash_message(format!("not a number: {:?}", e));
@@ -142,7 +146,7 @@ pub fn render_reverse_ptr<ERR: ::std::fmt::Debug>(
                         .find(|reloc| reloc.0 == alloc_id)
                         .map(|_| id)
             }).collect();
-            box_html!{ html {
+            (html!{ html {
                 head {
                     title { : format!("Allocations with pointers to Allocation {}", alloc_id) }
                     meta(charset = "UTF-8") {}
@@ -153,7 +157,8 @@ pub fn render_reverse_ptr<ERR: ::std::fmt::Debug>(
                         br;
                     }
                 }
-            }}
+            }}).write_to_string(&mut buf).unwrap();
+            Html(buf)
         },
         None => {
             set_flash_message("no allocation selected".to_string());
@@ -166,8 +171,9 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
     pcx: &PrirodaContext,
     alloc_id: Option<Result<AllocId, ERR>>,
     offset: Option<Result<u64, ERR>>,
-) -> Box<RenderBox + Send> {
+) -> Html<String> {
     use horrorshow::Raw;
+    let mut buf = String::new();
     match (alloc_id, offset) {
         (Some(Err(e)), _) |
         (_, Some(Err(e))) => {
@@ -189,7 +195,7 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
             } else {
                 ("unknown memory".to_string(), 0, 0)
             };
-            box_html!{ html {
+            (html!{ html {
                 head {
                     title { : format!("Allocation {}", alloc_id) }
                     meta(charset = "UTF-8") {}
@@ -203,7 +209,8 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
                     br;
                     a(href=format!("/reverse_ptr/{}", alloc_id)) { : "List allocations with pointers into this allocation" }
                 }
-            }}
+            }}).write_to_string(&mut buf).unwrap();
+            Html(buf)
         },
         (None, _) => {
             set_flash_message("no allocation selected".to_string());

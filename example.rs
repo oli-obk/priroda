@@ -2,7 +2,11 @@ fn return_42() -> u64 {
     42
 }
 
+struct MyWrapper(&'static u8);
+
 fn main() -> Result<(), std::io::Error> {
+    let my_wrapper = MyWrapper(&2);
+    let wrapper_ref = &my_wrapper;
     let abc = Box::new(0);
     return_42();
     let f = 1.4f64;
