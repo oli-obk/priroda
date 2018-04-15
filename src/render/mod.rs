@@ -15,26 +15,22 @@ use miri::{
 
 
 use rustc::hir::map::definitions::DefPathData;
-use rustc::session::Session;
 
 use std::borrow::Cow;
 
 pub(crate) struct Renderer<'a, 'tcx: 'a> {
     pub promise: Promise<Page>,
     pub pcx: &'a PrirodaContext<'a, 'tcx>,
-    pub session: &'a Session,
 }
 
 impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
     pub fn new(
         promise: Promise<Page>,
         pcx: &'a PrirodaContext<'a, 'tcx>,
-        session: &'a Session,
     ) -> Self {
         Renderer {
             promise,
             pcx,
-            session,
         }
     }
     pub fn render_main_window<MSG: Into<Cow<'static, str>>>(
@@ -42,14 +38,14 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
         display_frame: Option<usize>,
         message: MSG,
     ) {
-        let Renderer { promise, pcx, session } = self;
+        let Renderer { promise, pcx } = self;
         let message = message.into().into_owned();
         let is_active_stack_frame = match display_frame {
             Some(n) => n == pcx.stack().len() - 1,
             None => true,
         };
         let frame = display_frame.and_then(|frame| pcx.stack().get(frame)).or_else(|| pcx.stack().last());
-        let filename = session.local_crate_source_file.clone().unwrap_or_else(|| "no file name".to_string().into());
+        let filename = pcx.tcx.sess.local_crate_source_file.clone().unwrap_or_else(|| "no file name".to_string().into());
         let stack: Vec<(String, String, String)> = pcx.stack().iter().map(|&Frame { instance, span, .. } | {
             (
                 if pcx.tcx.def_key(instance.def_id()).disambiguated_data.data == DefPathData::ClosureExpr {
@@ -57,7 +53,7 @@ impl<'a, 'tcx: 'a> Renderer<'a, 'tcx> {
                 } else {
                     instance.to_string()
                 },
-                session.codemap().span_to_string(span),
+                pcx.tcx.sess.codemap().span_to_string(span),
                 format!("{:?}", instance.def_id()),
             )
         }).collect();

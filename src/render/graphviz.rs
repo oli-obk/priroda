@@ -18,10 +18,10 @@ use rustc_data_structures::indexed_vec::Idx;
 
 pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
     let mut rendered = String::new();
-    render_mir_svg(frame, &frame.mir, breakpoints, &mut rendered, None).unwrap();
+    render_mir_svg(&frame.mir, breakpoints, &mut rendered, None).unwrap();
     for (i, promoted) in frame.mir.promoted.iter_enumerated() {
         println!("promoted: {:?}", i);
-        render_mir_svg(frame, promoted, breakpoints, &mut rendered, Some(i.index())).unwrap();
+        render_mir_svg(promoted, breakpoints, &mut rendered, Some(i.index())).unwrap();
     }
     let (bb, stmt) = {
         let blck = &frame.mir.basic_blocks()[frame.block];
@@ -98,7 +98,7 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
 }
 
 /// Write a graphviz DOT graph of a list of MIRs.
-pub fn render_mir_svg<W: Write>(frame: &Frame, mir: &Mir, breakpoints: LocalBreakpoints, w: &mut W, promoted: Option<usize>) -> fmt::Result {
+pub fn render_mir_svg<W: Write>(mir: &Mir, breakpoints: LocalBreakpoints, w: &mut W, promoted: Option<usize>) -> fmt::Result {
     let mut dot = String::new();
     if let Some(promoted) = promoted {
         writeln!(dot, "digraph promoted{} {{", promoted)?;

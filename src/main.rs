@@ -98,7 +98,10 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
 
         control.after_analysis.callback = Box::new(|state| {
             state.session.abort_if_errors();
-            act(state.session, state.tcx.unwrap());
+            let ecx = create_ecx(state.session, state.tcx.unwrap());
+            let bptree = load_breakpoints_from_file();
+            let pcx = PrirodaContext{ ecx, bptree };
+            act(pcx);
         });
 
         control
@@ -163,7 +166,7 @@ fn parse_breakpoint_from_url(s: &str) -> Result<Breakpoint, String> {
 }
 
 fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
-    let (node_id, span) = session.entry_fn.borrow().expect("no main or start function found");
+    let (node_id, span, _) = session.entry_fn.borrow().expect("no main or start function found");
     let main_id = tcx.hir.local_def_id(node_id);
 
     let main_instance = ty::Instance::mono(tcx, main_id);
@@ -184,11 +187,7 @@ fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> E
     ecx
 }
 
-fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    let ecx = create_ecx(session, tcx);
-    let bptree = load_breakpoints_from_file();
-    let mut pcx = PrirodaContext { ecx, bptree };
-
+fn act<'a, 'tcx: 'a>(mut pcx: PrirodaContext<'a, 'tcx>) {
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
     let sender = Mutex::new(sender);
@@ -215,7 +214,7 @@ fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     // process commands
     for (path, promise) in receiver {
         macro renderer() {
-            Renderer::new(promise, &pcx, session)
+            Renderer::new(promise, &pcx)
         }
         macro render_main_window($frame:expr, $msg:expr) {
             renderer!().render_main_window($frame, $msg);
@@ -271,7 +270,7 @@ fn act<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
                 render_main_window!(None, format!("All breakpoints removed"));
             }
             Some("restart") => {
-                pcx.ecx = create_ecx(session, tcx);
+                pcx.ecx = create_ecx(pcx.tcx.sess, pcx.tcx.tcx);
                 render_main_window!(None, String::new());
             }
             Some(cmd) => {
