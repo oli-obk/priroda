@@ -28,7 +28,6 @@ extern crate lazy_static;
 
 mod render;
 mod step;
-use render::Renderer;
 
 use horrorshow::prelude::*;
 use promising_future::future_promise;
@@ -79,12 +78,6 @@ impl<'a, 'tcx: 'a> std::ops::DerefMut for PrirodaContext<'a, 'tcx> {
         &mut self.ecx
     }
 }
-
-enum Page {
-    Html(Box<RenderBox + Send>),
-}
-
-use Page::*;
 
 struct MiriCompilerCalls;
 
@@ -213,11 +206,8 @@ fn act<'a, 'tcx: 'a>(mut pcx: PrirodaContext<'a, 'tcx>) {
 
     // process commands
     for (path, promise) in receiver {
-        macro renderer() {
-            Renderer::new(promise, &pcx)
-        }
         macro render_main_window($frame:expr, $msg:expr) {
-            renderer!().render_main_window($frame, $msg);
+            promise.set(render::render_main_window(&pcx, $frame, $msg));
         }
 
         println!("processing `{}`", path);
@@ -225,8 +215,8 @@ fn act<'a, 'tcx: 'a>(mut pcx: PrirodaContext<'a, 'tcx>) {
         let mut matches = path[1..].split('/');
         match matches.next() {
             Some("") | None => render_main_window!(None, String::new()),
-            Some("reverse_ptr") => renderer!().render_reverse_ptr(matches.next().map(str::parse)),
-            Some("ptr") => renderer!().render_ptr_memory(matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse)),
+            Some("reverse_ptr") => promise.set(render::render_reverse_ptr(&pcx, matches.next().map(str::parse))),
+            Some("ptr") => promise.set(render::render_ptr_memory(&pcx, matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse))),
             Some("frame") => match matches.next().map(str::parse) {
                 Some(Ok(n)) => render_main_window!(Some(n), String::new()),
                 Some(Err(e)) => render_main_window!(None, format!("not a number: {:?}", e)),
@@ -285,7 +275,7 @@ fn act<'a, 'tcx: 'a>(mut pcx: PrirodaContext<'a, 'tcx>) {
     handle.join().unwrap();
 }
 
-struct Service(std::sync::mpsc::Sender<(String, promising_future::Promise<Page>)>);
+struct Service(std::sync::mpsc::Sender<(String, promising_future::Promise<Box<RenderBox + Send>>)>);
 
 impl hyper::server::Service for Service {
     type Request = Request;
@@ -294,11 +284,11 @@ impl hyper::server::Service for Service {
     type Future = FutureResult<Response, hyper::Error>;
 
     fn call(&self, req: Request) -> Self::Future {
-        let (future, promise) = future_promise::<Page>();
+        let (future, promise) = future_promise::<Box<RenderBox + Send>>();
         self.0.send((req.path().to_string(), promise)).unwrap();
         println!("got `{}`", req.path());
         futures::future::ok(match future.value() {
-            Some(Html(output)) => {
+            Some(output) => {
                 println!("rendering page");
                 let mut text = Vec::new();
                 output.write_to_io(&mut text).unwrap();
