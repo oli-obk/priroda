@@ -12,17 +12,23 @@ use miri::{
     AllocId,
 };
 
-
 use rustc::hir::map::definitions::DefPathData;
 
-use std::borrow::Cow;
+use std::cell::Cell;
 
-pub fn render_main_window<MSG: Into<Cow<'static, str>>>(
+thread_local! {
+    static FLASH_MESSAGE: Cell<String> = Cell::new(String::new());
+}
+
+pub fn set_flash_message(msg: String) {
+    FLASH_MESSAGE.with(|key| key.set(msg));
+}
+
+pub fn render_main_window(
     pcx: &PrirodaContext,
     display_frame: Option<usize>,
-    message: MSG,
 ) -> Box<RenderBox + Send> {
-    let message = message.into().into_owned();
+    let message = FLASH_MESSAGE.with(|key| key.replace(String::new()));
     let is_active_stack_frame = match display_frame {
         Some(n) => n == pcx.stack().len() - 1,
         None => true,
@@ -125,7 +131,10 @@ pub fn render_reverse_ptr<ERR: ::std::fmt::Debug>(
     alloc_id: Option<Result<u64, ERR>>,
 ) -> Box<RenderBox + Send> {
     match alloc_id {
-        Some(Err(e)) => render_main_window(pcx, None, format!("not a number: {:?}", e)),
+        Some(Err(e)) => {
+            set_flash_message(format!("not a number: {:?}", e));
+            render_main_window(pcx, None)
+        },
         Some(Ok(alloc_id)) => {
             let allocs: Vec<_> = pcx.memory().allocations().filter_map(|(id, alloc)| {
                 alloc.relocations
@@ -146,7 +155,10 @@ pub fn render_reverse_ptr<ERR: ::std::fmt::Debug>(
                 }
             }}
         },
-        None => render_main_window(pcx, None, "no allocation selected".to_string()),
+        None => {
+            set_flash_message("no allocation selected".to_string());
+            render_main_window(pcx, None)
+        }
     }
 }
 
@@ -158,7 +170,10 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
     use horrorshow::Raw;
     match (alloc_id, offset) {
         (Some(Err(e)), _) |
-        (_, Some(Err(e))) => render_main_window(pcx, None, format!("not a number: {:?}", e)),
+        (_, Some(Err(e))) => {
+            set_flash_message(format!("not a number: {:?}", e));
+            render_main_window(pcx, None)
+        }
         (Some(Ok(alloc_id)), offset) => {
             let offset = offset.unwrap_or(Ok(0)).expect("already checked in previous arm");
             let (mem, offset, rest) =
@@ -190,6 +205,9 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
                 }
             }}
         },
-        (None, _) => render_main_window(pcx, None, "no allocation selected".to_string()),
+        (None, _) => {
+            set_flash_message("no allocation selected".to_string());
+            render_main_window(pcx, None)
+        }
     }
 }

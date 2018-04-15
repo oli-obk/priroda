@@ -206,68 +206,80 @@ fn act<'a, 'tcx: 'a>(mut pcx: PrirodaContext<'a, 'tcx>) {
 
     // process commands
     for (path, promise) in receiver {
-        macro render_main_window($frame:expr, $msg:expr) {
-            promise.set(render::render_main_window(&pcx, $frame, $msg));
+        macro render_main_window($frame:expr) {
+            promise.set(render::render_main_window(&pcx, $frame));
         }
 
         println!("processing `{}`", path);
         assert_eq!(&path[..1], "/");
         let mut matches = path[1..].split('/');
         match matches.next() {
-            Some("") | None => render_main_window!(None, String::new()),
+            Some("") | None => render_main_window!(None),
             Some("reverse_ptr") => promise.set(render::render_reverse_ptr(&pcx, matches.next().map(str::parse))),
             Some("ptr") => promise.set(render::render_ptr_memory(&pcx, matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse))),
             Some("frame") => match matches.next().map(str::parse) {
-                Some(Ok(n)) => render_main_window!(Some(n), String::new()),
-                Some(Err(e)) => render_main_window!(None, format!("not a number: {:?}", e)),
+                Some(Ok(n)) => render_main_window!(Some(n)),
+                Some(Err(e)) => {
+                    render::set_flash_message(format!("not a number: {:?}", e));
+                    render_main_window!(None);
+                }
                 // display current frame
-                None => render_main_window!(None, String::new()),
+                None => render_main_window!(None),
             },
             Some("add_breakpoint") => {
                 let res = parse_breakpoint_from_url(&path);
                 match res {
                     Ok(breakpoint) => {
                         pcx.bptree.add_breakpoint(breakpoint);
-                        render_main_window!(None, format!("Breakpoint added for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
+                        render::set_flash_message(format!("Breakpoint added for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
+                        render_main_window!(None);
                     }
                     Err(e) => {
-                        render_main_window!(None, e.to_string());
+                        render::set_flash_message(e.to_string());
+                        render_main_window!(None);
                     }
                 }
             }
             Some("add_breakpoint_here") => {
                 let frame = pcx.ecx.frame();
                 pcx.bptree.add_breakpoint(Breakpoint(frame.instance.def_id(), frame.block, frame.stmt));
-                render_main_window!(None, format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), frame.block.index(), frame.stmt));
+                render::set_flash_message(format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), frame.block.index(), frame.stmt));
+                render_main_window!(None);
             }
             Some("remove_breakpoint") => {
                 let res = parse_breakpoint_from_url(&path);
                 match res {
                     Ok(breakpoint) => {
                         if pcx.bptree.remove_breakpoint(breakpoint) {
-                            render_main_window!(None, format!("Breakpoint removed for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
+                            render::set_flash_message(format!("Breakpoint removed for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
+                            render_main_window!(None);
                         } else {
-                            render_main_window!(None, format!("No breakpoint for for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
+                            render::set_flash_message(format!("No breakpoint for for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2));
+                            render_main_window!(None);
                         }
                     }
                     Err(e) => {
-                        render_main_window!(None, e.to_string());
+                        render::set_flash_message(e.to_string());
+                        render_main_window!(None);
                     }
                 }
             }
             Some("remove_all_breakpoints") => {
                 pcx.bptree.remove_all();
-                render_main_window!(None, format!("All breakpoints removed"));
+                render::set_flash_message(format!("All breakpoints removed"));
+                render_main_window!(None);
             }
             Some("restart") => {
                 pcx.ecx = create_ecx(pcx.tcx.sess, pcx.tcx.tcx);
-                render_main_window!(None, String::new());
+                render_main_window!(None);
             }
             Some(cmd) => {
                 if let Some(message) = ::step::step_command(&mut pcx, cmd) {
-                    render_main_window!(None, message);
+                    render::set_flash_message(message);
+                    render_main_window!(None);
                 } else {
-                    render_main_window!(None, format!("unknown command: {}", cmd));
+                    render::set_flash_message(format!("unknown command: {}", cmd));
+                    render_main_window!(None);
                 }
             }
         }
