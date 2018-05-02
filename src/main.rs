@@ -16,7 +16,6 @@ extern crate log_settings;
 extern crate log;
 extern crate syntax;
 extern crate syntax_pos;
-extern crate hyper;
 extern crate futures;
 extern crate open;
 extern crate promising_future;
@@ -37,6 +36,7 @@ use rocket::State;
 use rocket::fairing::AdHoc;
 use rocket::response::{Flash, Redirect};
 use rocket::response::content::*;
+use rocket::response::status::*;
 use promising_future::future_promise;
 
 use miri::{
@@ -153,13 +153,15 @@ fn index(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSend
 }
 
 #[get("/frame/<frame>")]
-fn frame(sender: State<PrirodaSender>, frame: String) -> Result<Html<String>, Flash<Redirect>> {
+fn frame(sender: State<PrirodaSender>, frame: usize) -> Html<String> {
     do_work!(sender, |pcx| {
-        match frame.parse() {
-            Ok(n) => Ok(render::render_main_window(pcx, Some(n))),
-            Err(e) => Err(Flash::warning(Redirect::to("/"), format!("not a number: {:?}", e))),
-        }
+        render::render_main_window(pcx, Some(frame))
     })
+}
+
+#[get("/frame/<frame>", rank = 42)] // Error handler
+fn frame_invalid(frame: String) -> BadRequest<String> {
+    BadRequest(Some(format!("not a number: {:?}", frame.parse::<usize>().unwrap_err())))
 }
 
 #[get("/ptr/<path..>")]
@@ -178,26 +180,6 @@ fn reverse_ptr(ptr: String, sender: State<PrirodaSender>) -> Html<String> {
     })
 }
 
-#[get("/restart")]
-fn restart(sender: State<PrirodaSender>) -> Flash<Redirect> {
-    do_work_and_redirect!(sender, |pcx| {
-        pcx.ecx = create_ecx(pcx.tcx.sess, pcx.tcx.tcx);
-        "restarted"
-    })
-}
-
-#[get("/<path..>", rank = 42)]
-fn fallback(path: PathBuf, sender: State<PrirodaSender>) -> Flash<Redirect> {
-    do_work_and_redirect!(sender, |pcx| {
-        let path = path.to_string_lossy();
-        if let Some(message) = ::step::step_command(pcx, &*path) {
-            message
-        } else {
-            format!("unknown command: {}", path)
-        }
-    })
-}
-
 fn act<'a, 'tcx: 'a>(mut pcx: PrirodaContext<'a, 'tcx>) {
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -209,13 +191,12 @@ fn act<'a, 'tcx: 'a>(mut pcx: PrirodaContext<'a, 'tcx>) {
             .manage(sender)
             .mount("/", routes![
                 index,
-                frame,
-                restart,
+                frame, frame_invalid,
                 ptr,
                 reverse_ptr,
-                fallback,
             ])
-            .mount("breakpoints", step::routes::routes())
+            .mount("breakpoints", step::bp_routes::routes())
+            .mount("step", step::step_routes::routes())
             .attach(AdHoc::on_launch(|rocket| {
                 let config = rocket.config();
                 if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {

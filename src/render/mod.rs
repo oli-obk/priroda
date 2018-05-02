@@ -73,11 +73,11 @@ pub fn render_main_window(
                 div(id="left") {
                     div(id="commands") {
                         @ if is_active_stack_frame {
-                            a(href="/step") { div(title="Execute next MIR statement/terminator") { : "Step" } }
-                            a(href="/next") { div(title="Run until after the next MIR statement/terminator") { : "Next" } }
-                            a(href="/return") { div(title="Run until the function returns") { : "Return" } }
-                            a(href="/continue") { div(title="Run until termination or breakpoint") { : "Continue" } }
-                            a(href="/restart") { div(title="Abort execution and restart") { : "Restart" } }
+                            a(href="/step/single") { div(title="Execute next MIR statement/terminator") { : "Step" } }
+                            a(href="/step/next") { div(title="Run until after the next MIR statement/terminator") { : "Next" } }
+                            a(href="/step/return") { div(title="Run until the function returns") { : "Return" } }
+                            a(href="/step/continue") { div(title="Run until termination or breakpoint") { : "Continue" } }
+                            a(href="/step/restart") { div(title="Abort execution and restart") { : "Restart" } }
                             a(href="/breakpoints/add_here") { div(title="Add breakpoint at current location") { : "Add breakpoint here"} }
                             a(href="/breakpoints/remove_all") { div(title="Remove all breakpoints") { : "Remove all breakpoints"} }
                         } else {

@@ -72,43 +72,6 @@ impl<'a> LocalBreakpoints<'a> {
     }
 }
 
-pub fn step_command(pcx: &mut PrirodaContext, cmd: &str) -> Option<String> {
-    match cmd {
-        "step" => {
-            Some(step(pcx, |_ecx| ShouldContinue::Stop).unwrap_or_else(||String::new()))
-        },
-        "next" => {
-            let frame = pcx.stack().len();
-            let stmt = pcx.frame().stmt;
-            let block = pcx.frame().block;
-            let message = step(pcx, |ecx| {
-                if ecx.stack().len() <= frame && (block < ecx.frame().block || stmt < ecx.frame().stmt) {
-                    ShouldContinue::Stop
-                } else {
-                    ShouldContinue::Continue
-                }
-            });
-            Some(message.unwrap_or_else(||String::new()))
-        },
-        "return" => {
-            let frame = pcx.stack().len();
-            let message = step(pcx, |ecx| {
-                if ecx.stack().len() <= frame && is_ret(&ecx) {
-                    ShouldContinue::Stop
-                } else {
-                    ShouldContinue::Continue
-                }
-            });
-            Some(message.unwrap_or_else(||String::new()))
-        }
-        "continue" => {
-            let message = step(pcx, |_ecx| ShouldContinue::Continue);
-            Some(message.unwrap_or_else(||String::new()))
-        },
-        _ => None
-    }
-}
-
 pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> Option<String>
     where F: Fn(&EvalContext) -> ShouldContinue {
     let mut message = None;
@@ -217,7 +180,70 @@ fn parse_breakpoint_from_url(s: &str) -> Result<Breakpoint, String> {
     Ok(Breakpoint(def_id, bb, stmt))
 }
 
-pub mod routes {
+macro simple_route($name:ident: $route:expr, |$pcx:ident| $body:block) {
+    use {PrirodaSender, do_work_and_redirect};
+    use rocket::State;
+    use rocket::response::{Flash, Redirect};
+    #[get($route)]
+    pub fn $name(sender: State<PrirodaSender>) -> Flash<Redirect> {
+        do_work_and_redirect!(sender, |$pcx| {
+            $body.unwrap_or_else(||String::new())
+        })
+    }
+}
+
+pub mod step_routes {
+    use super::*;
+
+    pub fn routes() -> Vec<::rocket::Route> {
+        routes! [
+            restart,
+            single,
+            next,
+            return_,
+            continue_,
+        ]
+    }
+
+    simple_route!(restart: "/restart", |pcx| {
+        pcx.ecx = ::create_ecx(pcx.tcx.sess, pcx.tcx.tcx);
+        Some("restarted".to_string())
+    });
+
+    simple_route!(single: "/single", |pcx| {
+        step(pcx, |_ecx| ShouldContinue::Stop)
+    });
+
+    simple_route!(next: "/next", |pcx| {
+        let frame = pcx.stack().len();
+        let stmt = pcx.frame().stmt;
+        let block = pcx.frame().block;
+        step(pcx, |ecx| {
+            if ecx.stack().len() <= frame && (block < ecx.frame().block || stmt < ecx.frame().stmt) {
+                ShouldContinue::Stop
+            } else {
+                ShouldContinue::Continue
+            }
+        })
+    });
+
+    simple_route!(return_: "/return", |pcx| {
+        let frame = pcx.stack().len();
+        step(pcx, |ecx| {
+            if ecx.stack().len() <= frame && is_ret(&ecx) {
+                ShouldContinue::Stop
+            } else {
+                ShouldContinue::Continue
+            }
+        })
+    });
+
+    simple_route!(continue_: "/continue", |pcx| {
+        step(pcx, |_ecx| ShouldContinue::Continue)
+    });
+}
+
+pub mod bp_routes {
     use super::*;
     use std::path::PathBuf;
     use {PrirodaSender, do_work_and_redirect};
