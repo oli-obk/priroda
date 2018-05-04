@@ -38,3 +38,24 @@
   overflow: auto;
   margin: 2px 0;
 }
+
+@media only screen and (max-width: 600px) {
+  body {
+    height: unset;
+    overflow-y: scroll;
+  }
+  #left, #right {
+    display: block;
+    width: 100vw;
+    height: unset;
+    margin: 2px 0;
+    padding: 0 5px;
+  }
+  #mir {
+    width: calc(100vw - 100px) !important;
+    height: unset;
+  }
+  #mir:first-child {
+    height: 50vh !important;
+  }
+}
