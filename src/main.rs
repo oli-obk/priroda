@@ -9,7 +9,6 @@ extern crate miri;
 extern crate rustc;
 extern crate rustc_driver;
 extern crate rustc_data_structures;
-extern crate rustc_const_math;
 extern crate graphviz as dot;
 extern crate env_logger;
 extern crate log_settings;

@@ -186,7 +186,7 @@ fn write_edges<W: Write>(source: BasicBlock, mir: &Mir, w: &mut W) -> fmt::Resul
     let terminator = mir[source].terminator();
     let labels = terminator.kind.fmt_successor_labels();
 
-    for (&target, label) in terminator.successors().iter().zip(labels) {
+    for (&target, label) in terminator.successors().zip(labels) {
         writeln!(w, r#"    {} -> {} [label="{}"];"#, node(None, source), node(None, target), label)?;
     }
 
