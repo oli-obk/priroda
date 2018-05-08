@@ -81,6 +81,7 @@ pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> Option<String>
         }
         match pcx.step() {
             Ok(true) => {
+                pcx.step_count += 1;
                 if let Some(frame) = pcx.stack().last() {
                     let blck = &frame.mir.basic_blocks()[frame.block];
                     if frame.stmt != blck.statements.len() {
@@ -187,7 +188,7 @@ macro simple_route($name:ident: $route:expr, |$pcx:ident| $body:block) {
     #[get($route)]
     pub fn $name(sender: State<PrirodaSender>) -> Flash<Redirect> {
         do_work_and_redirect!(sender, |$pcx| {
-            $body.unwrap_or_else(||String::new())
+            (||$body)().unwrap_or_else(||String::new())
         })
     }
 }
@@ -199,6 +200,7 @@ pub mod step_routes {
         routes! [
             restart,
             single,
+            single_back,
             next,
             return_,
             continue_,
@@ -212,6 +214,18 @@ pub mod step_routes {
 
     simple_route!(single: "/single", |pcx| {
         step(pcx, |_ecx| ShouldContinue::Stop)
+    });
+
+    simple_route!(single_back: "/single_back", |pcx| {
+        pcx.ecx = ::create_ecx(pcx.tcx.sess, pcx.tcx.tcx);
+        pcx.step_count -= 1;
+        for _ in 0..pcx.step_count {
+            match pcx.step() {
+                Ok(true) => {}
+                res => return Some(format!("Miri is not deterministic causing error {:?}", res)),
+            }
+        }
+        Some("stepped back".to_string())
     });
 
     simple_route!(next: "/next", |pcx| {

@@ -76,6 +76,7 @@ pub fn render_main_window(
                             a(href="/step/single") { div(title="Execute next MIR statement/terminator") { : "Step" } }
                             a(href="/step/next") { div(title="Run until after the next MIR statement/terminator") { : "Next" } }
                             a(href="/step/return") { div(title="Run until the function returns") { : "Return" } }
+                            a(href="/step/single_back") { div(title="Execute previous MIR statement/terminator") { : "Step back" } }
                             a(href="/step/continue") { div(title="Run until termination or breakpoint") { : "Continue" } }
                             a(href="/step/restart") { div(title="Abort execution and restart") { : "Restart" } }
                             a(href="/breakpoints/add_here") { div(title="Add breakpoint at current location") { : "Add breakpoint here"} }

@@ -67,6 +67,7 @@ type PrirodaSender = Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaConte
 pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: EvalContext<'a, 'tcx>,
     bptree: BreakpointTree,
+    step_count: u128,
 }
 
 impl<'a, 'tcx: 'a> std::ops::Deref for PrirodaContext<'a, 'tcx> {
@@ -97,7 +98,11 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
             state.session.abort_if_errors();
             let ecx = create_ecx(state.session, state.tcx.unwrap());
             let bptree = step::load_breakpoints_from_file();
-            let pcx = PrirodaContext{ ecx, bptree };
+            let pcx = PrirodaContext{
+                ecx,
+                bptree,
+                step_count: 0
+            };
             act(pcx);
         });
 
