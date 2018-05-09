@@ -1,3 +1,13 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0px;
+  height: 100vh;
+  overflow-y: hidden;
+}
+
 #stack table tr td:nth-child(1) {
   color: red;
 }
@@ -19,6 +29,7 @@
 
 #locals table tr th {
   min-width: 14px;
+  font-size: 12px
 }
 
 .vertical {
@@ -31,10 +42,9 @@
 }
 
 #commands {
-  display: inline-flex;
-  border: 1px solid black;
-  top: 0;
-  left: 0;
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
   background-color: white;
   padding: 2px;
 }
@@ -42,6 +52,7 @@
 #commands > a {
   text-decoration: none;
   padding-right: 2px;
+  margin: 3px;
 }
 
 #commands > a > div {

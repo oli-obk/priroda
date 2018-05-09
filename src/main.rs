@@ -1,58 +1,92 @@
-#![feature(rustc_private, custom_attribute)]
-#![feature(i128_type)]
+#![feature(rustc_private, custom_attribute, decl_macro, plugin, fnbox)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
+#![plugin(rocket_codegen)]
 
+extern crate rocket;
 extern crate getopts;
 extern crate miri;
 extern crate rustc;
 extern crate rustc_driver;
-extern crate rustc_trans;
 extern crate rustc_data_structures;
 extern crate graphviz as dot;
 extern crate env_logger;
 extern crate log_settings;
 extern crate log;
 extern crate syntax;
-extern crate hyper;
+extern crate syntax_pos;
 extern crate futures;
 extern crate open;
 extern crate promising_future;
+extern crate syntect;
 #[macro_use]
 extern crate horrorshow;
 extern crate cgraph;
+extern crate regex;
+#[macro_use]
+extern crate lazy_static;
 
-mod graphviz;
-mod commands;
+mod render;
+mod step;
 
-use commands::Renderer;
-
-use horrorshow::prelude::*;
+use std::boxed::FnBox;
+use std::path::PathBuf;
+use rocket::State;
+use rocket::fairing::AdHoc;
+use rocket::response::{Flash, Redirect};
+use rocket::response::content::*;
+use rocket::response::status::*;
 use promising_future::future_promise;
 
 use miri::{
     StackPopCleanup,
-    Lvalue,
+    AllocId,
+    Place,
 };
-
-type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, miri::Evaluator>;
+use step::BreakpointTree;
 
 use rustc::session::Session;
+use rustc::ty::{self, TyCtxt, ParamEnv};
+use rustc::mir;
 use rustc_driver::{driver, CompilerCalls};
-use rustc::ty::{self, TyCtxt};
-use syntax::ast::{MetaItemKind, NestedMetaItemKind};
 
-use std::sync::Mutex;
-use hyper::server::{Request, Response};
-use futures::future::FutureResult;
+use std::sync::{Arc, Mutex};
 
-enum Page {
-    Html(Box<RenderBox + Send>),
+fn should_hide_stmt(stmt: &mir::Statement) -> bool {
+    use rustc::mir::StatementKind::*;
+    match stmt.kind {
+        StorageLive(_) | StorageDead(_) | Validate(_, _) | EndRegion(_) | Nop => true,
+        _ => false,
+    }
 }
 
-use Page::*;
+type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, 'tcx, miri::Evaluator<'tcx>>;
 
-struct MiriCompilerCalls;
+type PrirodaSender = Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>;
+
+pub struct PrirodaContext<'a, 'tcx: 'a> {
+    ecx: EvalContext<'a, 'tcx>,
+    bptree: BreakpointTree,
+    step_count: &'a mut u128,
+}
+
+impl<'a, 'tcx: 'a> std::ops::Deref for PrirodaContext<'a, 'tcx> {
+    type Target = EvalContext<'a, 'tcx>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ecx
+    }
+}
+
+impl<'a, 'tcx: 'a> std::ops::DerefMut for PrirodaContext<'a, 'tcx> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ecx
+    }
+}
+
+type RResult<T> = Result<T, Html<String>>;
+
+struct MiriCompilerCalls(Arc<Mutex<u128>>, Arc<Mutex<::std::sync::mpsc::Receiver<Box<FnBox(&mut PrirodaContext) + Send>>>>);
 
 impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
     fn build_controller(
@@ -62,202 +96,129 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
     ) -> driver::CompileController<'a> {
         let mut control = driver::CompileController::basic();
 
-        control.after_analysis.callback = Box::new(|state| {
+        let step_count = self.0.clone();
+        let receiver = self.1.clone();
+        control.after_analysis.callback = Box::new(move |state| {
             state.session.abort_if_errors();
-            let tcx = state.tcx.unwrap();
+            let mut step_count = step_count.lock().unwrap_or_else(|err|err.into_inner());
 
-            let (node_id, span) = state.session.entry_fn.borrow().expect("no main or start function found");
-            let main_id = tcx.hir.local_def_id(node_id);
+            let mut pcx = PrirodaContext{
+                ecx: create_ecx(state.session, state.tcx.unwrap()),
+                bptree: step::load_breakpoints_from_file(),
+                step_count: &mut *step_count,
+            };
 
-            let main_instance = ty::Instance::mono(tcx, main_id);
+            // Step to the position where miri crashed if it crashed
+            for _ in 0..*pcx.step_count {
+                match pcx.ecx.step() {
+                    Ok(true) => {}
+                    res => panic!("Miri is not deterministic causing error {:?}", res),
+                }
+            }
 
-            let limits = resource_limits_from_attributes(state);
-            let mut ecx = EvalContext::new(tcx, limits, Default::default(), Default::default());
-            let main_mir = ecx.load_mir(main_instance.def).expect("mir for `main` not found");
+            // Just ignore poisoning by panicking
+            let receiver = receiver.lock().unwrap_or_else(|err|err.into_inner());
 
-            ecx.push_stack_frame(
-                main_instance,
-                span,
-                main_mir,
-                Lvalue::undef(),
-                StackPopCleanup::None,
-            ).unwrap();
-
-            act(ecx, state.session, tcx);
+            // process commands
+            for command in receiver.iter() {
+                command.call_box((&mut pcx,));
+            }
         });
 
         control
     }
 }
 
-fn act<'a, 'tcx: 'a>(mut ecx: EvalContext<'a, 'tcx>, session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    // setup http server and similar
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let sender = Mutex::new(sender);
+fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
+    let (node_id, span, _) = session.entry_fn.borrow().expect("no main or start function found");
+    let main_id = tcx.hir.local_def_id(node_id);
 
-    let handle = std::thread::spawn(|| {
-        // setup server
-        let addr = "127.0.0.1:54321".parse().unwrap();
-        let server = hyper::server::Http::new().bind(&addr, move || {
-            Ok(Service(sender.lock().unwrap().clone()))
-        }).expect("could not create http server");
-        let addr = format!("http://{}", server.local_addr().unwrap());
-        if open::that(&addr).is_err() {
-            println!("open {} in your browser", addr);
-        };
-        server.run().unwrap()
-    });
+    let main_instance = ty::Instance::mono(tcx, main_id);
 
-    // process commands
-    for (path, promise) in receiver {
-        println!("processing `{}`", path);
-        assert_eq!(&path[..1], "/");
-        let mut matches = path[1..].split('/');
-        match matches.next() {
-            Some("") | None => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new()),
-            Some("step") => match ecx.step() {
-                Ok(true) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new()),
-                Ok(false) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, "interpretation finished".to_string()),
-                Err(e) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("{:?}", e)),
-            },
-            Some("next") => {
-                let frame = ecx.stack().len();
-                let stmt = ecx.stack().last().unwrap().stmt;
-                let block = ecx.stack().last().unwrap().block;
-                loop {
-                    match ecx.step() {
-                        Ok(true) => if ecx.stack().len() == frame && (block < ecx.stack().last().unwrap().block || stmt < ecx.stack().last().unwrap().stmt) {
-                            Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new());
-                        } else {
-                            continue;
-                        },
-                        Ok(false) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, "interpretation finished".to_string()),
-                        Err(e) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("{:?}", e)),
-                    }
-                    break;
-                }
-            },
-            Some("return") => {
-                let frame = ecx.stack().len();
-                fn is_ret(ecx: &EvalContext) -> bool {
-                    let stack = ecx.stack().last().unwrap();
-                    let basic_block = &stack.mir.basic_blocks()[stack.block];
+    let mut ecx = EvalContext::new(tcx.at(span), ParamEnv::reveal_all(), Default::default(), Default::default());
+    let main_mir = ecx.load_mir(main_instance.def).expect("mir for `main` not found");
 
-                    match basic_block.terminator().kind {
-                        rustc::mir::TerminatorKind::Return => stack.stmt >= basic_block.statements.len(),
-                        _ => false,
-                    }
-                }
-                loop {
-                    if ecx.stack().len() <= frame && is_ret(&ecx) {
-                        Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new());
-                        break;
-                    }
-                    match ecx.step() {
-                        Ok(true) => continue,
-                        Ok(false) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, "interpretation finished".to_string()),
-                        Err(e) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("{:?}", e)),
-                    }
-                    break;
-                }
-            }
-            Some("continue") => {
-                loop {
-                    match ecx.step() {
-                        Ok(true) => continue,
-                        Ok(false) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, "interpretation finished".to_string()),
-                        Err(e) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("{:?}", e)),
-                    }
-                    break;
-                }
-            },
-            Some("reverse_ptr") => Renderer::new(promise, &ecx, tcx, session).render_reverse_ptr(matches.next().map(str::parse)),
-            Some("ptr") => Renderer::new(promise, &ecx, tcx, session).render_ptr_memory(matches.next().map(str::parse), matches.next().map(str::parse)),
-            Some("frame") => match matches.next().map(str::parse) {
-                Some(Ok(n)) => Renderer::new(promise, &ecx, tcx, session).render_main_window(Some(n), String::new()),
-                Some(Err(e)) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("not a number: {:?}", e)),
-                // display current frame
-                None => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, String::new()),
-            },
-            Some(cmd) => Renderer::new(promise, &ecx, tcx, session).render_main_window(None, format!("unknown command: {}", cmd)),
-        }
-    }
-    handle.join().unwrap();
+    let return_type = main_mir.return_ty();
+    let return_layout = tcx.layout_of(ParamEnv::reveal_all().and(return_type)).expect("couldnt get layout for return pointer");
+    let return_ptr = ecx.memory.allocate(return_layout.size.bytes(), return_layout.align, None).unwrap();
+    ecx.push_stack_frame(
+        main_instance,
+        span,
+        main_mir,
+        Place::from_ptr(return_ptr, return_layout.align),
+        StackPopCleanup::None,
+    ).unwrap();
+    ecx
 }
 
-struct Service(std::sync::mpsc::Sender<(String, promising_future::Promise<Page>)>);
-
-impl hyper::server::Service for Service {
-    type Request = Request;
-    type Response = Response;
-    type Error = hyper::Error;
-    type Future = FutureResult<Response, hyper::Error>;
-
-    fn call(&self, req: Request) -> Self::Future {
-        let (future, promise) = future_promise::<Page>();
-        self.0.send((req.path().to_string(), promise)).unwrap();
-        println!("got `{}`", req.path());
-        futures::future::ok(match future.value() {
-            Some(Html(output)) => {
-                println!("rendering page");
-                let mut text = Vec::new();
-                output.write_to_io(&mut text).unwrap();
-                println!("sending page");
-                Response::new()
-                    .with_header(hyper::header::ContentLength(text.len() as u64))
-                    .with_body(text)
-            }
-            None => Response::new()
-                    .with_status(hyper::StatusCode::NotFound)
-        })
+macro do_work($sender:expr, |$pcx:ident| $body:block) {{
+    let (future, promise) = future_promise();
+    let sender = $sender.lock().unwrap_or_else(|err|err.into_inner());
+    match sender.send(Box::new(move |$pcx: &mut PrirodaContext| {
+        promise.set({$body});
+    })) {
+        Ok(()) => match future.value() {
+            Some(val) => Ok(val),
+            None => Err(Html("<center><h1>Miri crashed please go to <a href='/'>index</a></h1></center>".to_string()))
+        },
+        Err(_) => {
+            Err(Html("<center><h1>Miri crashed too often. Please restart priroda.</h1></center>".to_string()))
+        }
     }
+}}
+
+macro do_work_and_redirect($sender:expr, |$pcx:ident| $body:block) {
+    do_work!($sender, |$pcx| {
+        Flash::success(Redirect::to("/"), {$body})
+    })
 }
 
-fn resource_limits_from_attributes(state: &driver::CompileState) -> miri::ResourceLimits {
-    let mut limits = miri::ResourceLimits::default();
-    let krate = state.hir_crate.as_ref().unwrap();
-    let err_msg = "miri attributes need to be in the form `miri(key = value)`";
-    let extract_int = |lit: &syntax::ast::Lit| -> u128 {
-        match lit.node {
-            syntax::ast::LitKind::Int(i, _) => i,
-            _ => state.session.span_fatal(lit.span, "expected an integer literal"),
-        }
-    };
+#[get("/please_panic")]
+#[allow(unreachable_code)]
+fn please_panic(sender: State<PrirodaSender>) -> RResult<()> {
+    do_work!(sender, |_pcx| {
+        panic!("You requested a panic");
+    })
+}
 
-    for attr in krate.attrs.iter().filter(|a| a.name().map_or(false, |n| n == "miri")) {
-        if let Some(items) = attr.meta_item_list() {
-            for item in items {
-                if let NestedMetaItemKind::MetaItem(ref inner) = item.node {
-                    if let MetaItemKind::NameValue(ref value) = inner.node {
-                        match &inner.name().as_str()[..] {
-                            "memory_size" => limits.memory_size = extract_int(value) as u64,
-                            "step_limit" => limits.step_limit = extract_int(value) as u64,
-                            "stack_limit" => limits.stack_limit = extract_int(value) as usize,
-                            _ => state.session.span_err(item.span, "unknown miri attribute"),
-                        }
-                    } else {
-                        state.session.span_err(inner.span, err_msg);
-                    }
-                } else {
-                    state.session.span_err(item.span, err_msg);
+fn server(sender: PrirodaSender) {
+    use rocket::config::Value;
+    rocket::ignite()
+        .manage(sender)
+        .mount("/", routes![please_panic])
+        .mount("/", render::routes::routes())
+        .mount("breakpoints", step::bp_routes::routes())
+        .mount("step", step::step_routes::routes())
+        .attach(AdHoc::on_launch(|rocket| {
+            let config = rocket.config();
+            if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {
+                let addr = format!("http://{}:{}", config.address, config.port);
+                if open::that(&addr).is_err() {
+                    println!("open {} in your browser", addr);
                 }
             }
-        } else {
-            state.session.span_err(attr.span, err_msg);
-        }
-    }
-    limits
+        }))
+        .launch();
 }
 
+// Copied from miri/bin/miri.rs
 fn find_sysroot() -> String {
+    if let Ok(sysroot) = std::env::var("MIRI_SYSROOT") {
+        return sysroot;
+    }
+
     // Taken from https://github.com/Manishearth/rust-clippy/pull/911.
     let home = option_env!("RUSTUP_HOME").or(option_env!("MULTIRUST_HOME"));
     let toolchain = option_env!("RUSTUP_TOOLCHAIN").or(option_env!("MULTIRUST_TOOLCHAIN"));
     match (home, toolchain) {
         (Some(home), Some(toolchain)) => format!("{}/toolchains/{}", home, toolchain),
-        _ => option_env!("RUST_SYSROOT")
-            .expect("need to specify RUST_SYSROOT env var or use rustup or multirust")
-            .to_owned(),
+        _ => {
+            option_env!("RUST_SYSROOT")
+                .expect(
+                    "need to specify RUST_SYSROOT env var or use rustup or multirust",
+                )
+                .to_owned()
+        }
     }
 }
 
@@ -271,7 +232,31 @@ fn main() {
         args.push(find_sysroot());
     }
 
-    rustc_driver::run_compiler(&args, &mut MiriCompilerCalls, None, None);
+    // setup http server and similar
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let sender: PrirodaSender = Mutex::new(sender);
+    let step_count = Arc::new(Mutex::new(0));
+
+    let handle = std::thread::spawn(move || {
+        let args = Arc::new(args);
+        let receiver = Arc::new(Mutex::new(receiver));
+        for i in 0..5 {
+            if i != 0 {
+                println!("\n============== Miri crashed - restart try {} ==============\n", i);
+            }
+            let step_count = step_count.clone();
+            let receiver = receiver.clone();
+            let args = args.clone();
+            // Ignore result to restart in case of a crash
+            let _ = std::thread::spawn(move || {
+                rustc_driver::run_compiler(&*args, &mut MiriCompilerCalls(step_count, receiver), None, None);
+            }).join();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        println!("\n============== Miri crashed too often. Aborting ==============\n");
+    });
+    server(sender);
+    handle.join().unwrap();
 }
 
 fn init_logger() {

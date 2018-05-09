@@ -1,0 +1,9 @@
+[development]
+address = "localhost"
+port = 54321
+#spawn_browser = true
+
+[production]
+address = "0.0.0.0"
+port = 8080
+spawn_browser = false
