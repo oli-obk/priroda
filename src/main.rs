@@ -50,7 +50,7 @@ use rustc::ty::{self, TyCtxt, ParamEnv};
 use rustc::mir;
 use rustc_driver::{driver, CompilerCalls};
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 fn should_hide_stmt(stmt: &mir::Statement) -> bool {
     use rustc::mir::StatementKind::*;
@@ -67,7 +67,7 @@ type PrirodaSender = Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaConte
 pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: EvalContext<'a, 'tcx>,
     bptree: BreakpointTree,
-    step_count: u128,
+    step_count: &'a mut u128,
 }
 
 impl<'a, 'tcx: 'a> std::ops::Deref for PrirodaContext<'a, 'tcx> {
@@ -84,7 +84,9 @@ impl<'a, 'tcx: 'a> std::ops::DerefMut for PrirodaContext<'a, 'tcx> {
     }
 }
 
-struct MiriCompilerCalls;
+type RResult<T> = Result<T, Html<String>>;
+
+struct MiriCompilerCalls(Arc<Mutex<u128>>, Arc<Mutex<::std::sync::mpsc::Receiver<Box<FnBox(&mut PrirodaContext) + Send>>>>);
 
 impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
     fn build_controller(
@@ -94,16 +96,35 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
     ) -> driver::CompileController<'a> {
         let mut control = driver::CompileController::basic();
 
-        control.after_analysis.callback = Box::new(|state| {
+        let step_count = self.0.clone();
+        let receiver = self.1.clone();
+        control.after_analysis.callback = Box::new(move |state| {
             state.session.abort_if_errors();
-            let ecx = create_ecx(state.session, state.tcx.unwrap());
+            let mut ecx = create_ecx(state.session, state.tcx.unwrap());
             let bptree = step::load_breakpoints_from_file();
-            let pcx = PrirodaContext{
+            let mut step_count = step_count.lock().unwrap_or_else(|err|err.into_inner());
+
+            let mut pcx = PrirodaContext{
                 ecx,
                 bptree,
-                step_count: 0
+                step_count: &mut *step_count,
             };
-            act(pcx);
+
+            // Step to the position where miri crashed if it crashed
+            for _ in 0..*pcx.step_count {
+                match pcx.ecx.step() {
+                    Ok(true) => {}
+                    res => panic!("Miri is not deterministic causing error {:?}", res),
+                }
+            }
+
+            // Just ignore poisoning by panicking
+            let receiver = receiver.lock().unwrap_or_else(|err|err.into_inner());
+
+            // process commands
+            for command in receiver.iter() {
+                command.call_box((&mut pcx,));
+            }
         });
 
         control
@@ -134,10 +155,18 @@ fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> E
 
 macro do_work($sender:expr, |$pcx:ident| $body:block) {{
     let (future, promise) = future_promise();
-    $sender.lock().unwrap().send(Box::new(move |$pcx: &mut PrirodaContext| {
+    let sender = $sender.lock().unwrap_or_else(|err|err.into_inner());
+    match sender.send(Box::new(move |$pcx: &mut PrirodaContext| {
         promise.set({$body});
-    })).unwrap();
-    future.value().unwrap()
+    })) {
+        Ok(()) => match future.value() {
+            Some(val) => Ok(val),
+            None => Err(Html("<center><h1>Miri crashed please go to /</h1></center>".to_string()))
+        },
+        Err(_) => {
+            Err(Html("<center><h1>Miri crashed too often. Please restart priroda.</h1></center>".to_string()))
+        }
+    }
 }}
 
 macro do_work_and_redirect($sender:expr, |$pcx:ident| $body:block) {
@@ -147,7 +176,7 @@ macro do_work_and_redirect($sender:expr, |$pcx:ident| $body:block) {
 }
 
 #[get("/")]
-fn index(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSender>) -> Html<String> {
+fn index(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSender>) -> RResult<Html<String>> {
     do_work!(sender, |pcx| {
         if let Some(flash) = flash {
             render::set_flash_message(flash.msg().to_string());
@@ -157,7 +186,7 @@ fn index(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSend
 }
 
 #[get("/frame/<frame>")]
-fn frame(sender: State<PrirodaSender>, frame: usize) -> Html<String> {
+fn frame(sender: State<PrirodaSender>, frame: usize) -> RResult<Html<String>> {
     do_work!(sender, |pcx| {
         render::render_main_window(pcx, Some(frame))
     })
@@ -169,7 +198,7 @@ fn frame_invalid(frame: String) -> BadRequest<String> {
 }
 
 #[get("/ptr/<path..>")]
-fn ptr(path: PathBuf, sender: State<PrirodaSender>) -> Html<String> {
+fn ptr(path: PathBuf, sender: State<PrirodaSender>) -> RResult<Html<String>> {
     do_work!(sender, |pcx| {
         let path = path.to_string_lossy();
         let mut matches = path.split('/');
@@ -178,46 +207,42 @@ fn ptr(path: PathBuf, sender: State<PrirodaSender>) -> Html<String> {
 }
 
 #[get("/reverse_ptr/<ptr>")]
-fn reverse_ptr(ptr: String, sender: State<PrirodaSender>) -> Html<String> {
+fn reverse_ptr(ptr: String, sender: State<PrirodaSender>) -> RResult<Html<String>> {
     do_work!(sender, |pcx| {
         render::render_reverse_ptr(pcx, Some(ptr.parse()))
     })
 }
 
-fn act<'a, 'tcx: 'a>(mut pcx: PrirodaContext<'a, 'tcx>) {
-    // setup http server and similar
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let sender: Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>> = Mutex::new(sender);
+#[get("/please_panic")]
+fn please_panic(sender: State<PrirodaSender>) -> RResult<()> {
+    do_work!(sender, |_pcx| {
+        panic!("You requested a panic");
+    })
+}
 
-    let handle = std::thread::spawn(|| {
-        use rocket::config::Value;
-        rocket::ignite()
-            .manage(sender)
-            .mount("/", routes![
-                index,
-                frame, frame_invalid,
-                ptr,
-                reverse_ptr,
-            ])
-            .mount("breakpoints", step::bp_routes::routes())
-            .mount("step", step::step_routes::routes())
-            .attach(AdHoc::on_launch(|rocket| {
-                let config = rocket.config();
-                if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {
-                    let addr = format!("http://{}:{}", config.address, config.port);
-                    if open::that(&addr).is_err() {
-                        println!("open {} in your browser", addr);
-                    }
+fn server(sender: PrirodaSender) {
+    use rocket::config::Value;
+    rocket::ignite()
+        .manage(sender)
+        .mount("/", routes![
+            index,
+            frame, frame_invalid,
+            ptr,
+            reverse_ptr,
+            please_panic,
+        ])
+        .mount("breakpoints", step::bp_routes::routes())
+        .mount("step", step::step_routes::routes())
+        .attach(AdHoc::on_launch(|rocket| {
+            let config = rocket.config();
+            if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {
+                let addr = format!("http://{}:{}", config.address, config.port);
+                if open::that(&addr).is_err() {
+                    println!("open {} in your browser", addr);
                 }
-            }))
-            .launch();
-    });
-
-    // process commands
-    for command in receiver {
-        command.call_box((&mut pcx,));
-    }
-    handle.join().unwrap();
+            }
+        }))
+        .launch();
 }
 
 // Copied from miri/bin/miri.rs
@@ -251,7 +276,31 @@ fn main() {
         args.push(find_sysroot());
     }
 
-    rustc_driver::run_compiler(&args, &mut MiriCompilerCalls, None, None);
+    // setup http server and similar
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let sender: PrirodaSender = Mutex::new(sender);
+    let step_count = Arc::new(Mutex::new(0));
+
+    let handle = std::thread::spawn(move || {
+        let args = Arc::new(args);
+        let receiver = Arc::new(Mutex::new(receiver));
+        for i in 0..5 {
+            if i != 0 {
+                println!("\n============== Miri crashed - restart try {} ==============\n", i);
+            }
+            let step_count = step_count.clone();
+            let receiver = receiver.clone();
+            let args = args.clone();
+            // Ignore result to restart in case of a crash
+            let _ = std::thread::spawn(move || {
+                rustc_driver::run_compiler(&*args, &mut MiriCompilerCalls(step_count, receiver), None, None);
+            }).join();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        println!("\n============== Miri crashed too often. Aborting ==============\n");
+    });
+    server(sender);
+    handle.join().unwrap();
 }
 
 fn init_logger() {
