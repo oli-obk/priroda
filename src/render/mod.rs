@@ -76,7 +76,7 @@ pub fn render_main_window(
                             a(href="/step/single") { div(title="Execute next MIR statement/terminator") { : "Step" } }
                             a(href="/step/next") { div(title="Run until after the next MIR statement/terminator") { : "Next" } }
                             a(href="/step/return") { div(title="Run until the function returns") { : "Return" } }
-                            a(href="/step/single_back") { div(title="Execute previous MIR statement/terminator") { : "Step back" } }
+                            a(href="/step/single_back") { div(title="Execute previous MIR statement/terminator (restarts and steps till one stmt before the current stmt)") { : "Step back (slow)" } }
                             a(href="/step/continue") { div(title="Run until termination or breakpoint") { : "Continue" } }
                             a(href="/step/restart") { div(title="Abort execution and restart") { : "Restart" } }
                             a(href="/breakpoints/add_here") { div(title="Add breakpoint at current location") { : "Add breakpoint here"} }
@@ -217,5 +217,56 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
             set_flash_message("no allocation selected".to_string());
             render_main_window(pcx, None)
         }
+    }
+}
+
+pub mod routes {
+    use ::*;
+
+    pub fn routes() -> Vec<::rocket::Route> {
+        routes![
+            index,
+            frame, frame_invalid,
+            ptr,
+            reverse_ptr,
+        ]
+    }
+
+    #[get("/")]
+    fn index(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSender>) -> RResult<Html<String>> {
+        do_work!(sender, |pcx| {
+            if let Some(flash) = flash {
+                render::set_flash_message(flash.msg().to_string());
+            }
+            render::render_main_window(pcx, None)
+        })
+    }
+
+    #[get("/frame/<frame>")]
+    fn frame(sender: State<PrirodaSender>, frame: usize) -> RResult<Html<String>> {
+        do_work!(sender, |pcx| {
+            render::render_main_window(pcx, Some(frame))
+        })
+    }
+
+    #[get("/frame/<frame>", rank = 42)] // Error handler
+    fn frame_invalid(frame: String) -> BadRequest<String> {
+        BadRequest(Some(format!("not a number: {:?}", frame.parse::<usize>().unwrap_err())))
+    }
+
+    #[get("/ptr/<path..>")]
+    fn ptr(path: PathBuf, sender: State<PrirodaSender>) -> RResult<Html<String>> {
+        do_work!(sender, |pcx| {
+            let path = path.to_string_lossy();
+            let mut matches = path.split('/');
+            render::render_ptr_memory(pcx, matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse))
+        })
+    }
+
+    #[get("/reverse_ptr/<ptr>")]
+    fn reverse_ptr(ptr: String, sender: State<PrirodaSender>) -> RResult<Html<String>> {
+        do_work!(sender, |pcx| {
+            render::render_reverse_ptr(pcx, Some(ptr.parse()))
+        })
     }
 }

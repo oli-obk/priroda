@@ -100,13 +100,11 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
         let receiver = self.1.clone();
         control.after_analysis.callback = Box::new(move |state| {
             state.session.abort_if_errors();
-            let mut ecx = create_ecx(state.session, state.tcx.unwrap());
-            let bptree = step::load_breakpoints_from_file();
             let mut step_count = step_count.lock().unwrap_or_else(|err|err.into_inner());
 
             let mut pcx = PrirodaContext{
-                ecx,
-                bptree,
+                ecx: create_ecx(state.session, state.tcx.unwrap()),
+                bptree: step::load_breakpoints_from_file(),
                 step_count: &mut *step_count,
             };
 
@@ -161,7 +159,7 @@ macro do_work($sender:expr, |$pcx:ident| $body:block) {{
     })) {
         Ok(()) => match future.value() {
             Some(val) => Ok(val),
-            None => Err(Html("<center><h1>Miri crashed please go to /</h1></center>".to_string()))
+            None => Err(Html("<center><h1>Miri crashed please go to <a href='/'>index</a></h1></center>".to_string()))
         },
         Err(_) => {
             Err(Html("<center><h1>Miri crashed too often. Please restart priroda.</h1></center>".to_string()))
@@ -175,45 +173,8 @@ macro do_work_and_redirect($sender:expr, |$pcx:ident| $body:block) {
     })
 }
 
-#[get("/")]
-fn index(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-    do_work!(sender, |pcx| {
-        if let Some(flash) = flash {
-            render::set_flash_message(flash.msg().to_string());
-        }
-        render::render_main_window(pcx, None)
-    })
-}
-
-#[get("/frame/<frame>")]
-fn frame(sender: State<PrirodaSender>, frame: usize) -> RResult<Html<String>> {
-    do_work!(sender, |pcx| {
-        render::render_main_window(pcx, Some(frame))
-    })
-}
-
-#[get("/frame/<frame>", rank = 42)] // Error handler
-fn frame_invalid(frame: String) -> BadRequest<String> {
-    BadRequest(Some(format!("not a number: {:?}", frame.parse::<usize>().unwrap_err())))
-}
-
-#[get("/ptr/<path..>")]
-fn ptr(path: PathBuf, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-    do_work!(sender, |pcx| {
-        let path = path.to_string_lossy();
-        let mut matches = path.split('/');
-        render::render_ptr_memory(pcx, matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse))
-    })
-}
-
-#[get("/reverse_ptr/<ptr>")]
-fn reverse_ptr(ptr: String, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-    do_work!(sender, |pcx| {
-        render::render_reverse_ptr(pcx, Some(ptr.parse()))
-    })
-}
-
 #[get("/please_panic")]
+#[allow(unreachable_code)]
 fn please_panic(sender: State<PrirodaSender>) -> RResult<()> {
     do_work!(sender, |_pcx| {
         panic!("You requested a panic");
@@ -224,13 +185,8 @@ fn server(sender: PrirodaSender) {
     use rocket::config::Value;
     rocket::ignite()
         .manage(sender)
-        .mount("/", routes![
-            index,
-            frame, frame_invalid,
-            ptr,
-            reverse_ptr,
-            please_panic,
-        ])
+        .mount("/", routes![please_panic])
+        .mount("/", render::routes::routes())
         .mount("breakpoints", step::bp_routes::routes())
         .mount("step", step::step_routes::routes())
         .attach(AdHoc::on_launch(|rocket| {
