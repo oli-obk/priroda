@@ -28,6 +28,7 @@ extern crate lazy_static;
 
 mod render;
 mod step;
+mod watch;
 
 use std::boxed::FnBox;
 use std::path::PathBuf;
@@ -68,6 +69,7 @@ pub struct PrirodaContext<'a, 'tcx: 'a> {
     bptree: BreakpointTree,
     step_count: &'a mut u128,
     auto_refresh: bool,
+    traces: watch::Traces,
 }
 
 type RResult<T> = Result<T, Html<String>>;
@@ -93,6 +95,7 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
                 bptree: step::load_breakpoints_from_file(),
                 step_count: &mut *step_count,
                 auto_refresh: true,
+                traces: watch::Traces::new(),
             };
 
             // Step to the position where miri crashed if it crashed
@@ -238,6 +241,7 @@ fn server(sender: PrirodaSender) {
         .mount("/", render::routes::routes())
         .mount("breakpoints", step::bp_routes::routes())
         .mount("step", step::step_routes::routes())
+        .mount("watch", routes![watch::show, watch::add])
         .attach(AdHoc::on_launch(|rocket| {
             let config = rocket.config();
             if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {

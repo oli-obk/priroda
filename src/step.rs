@@ -82,6 +82,8 @@ pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> String
         match pcx.ecx.step() {
             Ok(true) => {
                 *pcx.step_count += 1;
+                ::watch::step_callback(pcx);
+
                 if let Some(frame) = pcx.ecx.stack().last() {
                     let blck = &frame.mir.basic_blocks()[frame.block];
                     if frame.stmt != blck.statements.len() {

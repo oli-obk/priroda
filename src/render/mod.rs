@@ -1,5 +1,5 @@
 mod graphviz;
-mod locals;
+pub mod locals;
 mod source;
 
 use rustc::hir::map::definitions::DefPathData;
@@ -108,6 +108,9 @@ pub fn render_main_window(
                     }
                 }
                 div(id="right") {
+                    div {
+                        : format!("Step count: {}", pcx.step_count);
+                    }
                     div(id="stack") {
                         table(border="1") {
                             @ for (i, &(ref s, ref span, ref def_id)) in stack.iter().enumerate().rev() {
@@ -203,6 +206,8 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
             }.into()) {
                 if bytes * 2 > offset {
                     (mem, offset, (bytes * 2 - offset - 1) as usize)
+                } else if bytes * 2 == 0 && offset == 0 {
+                    (mem, 0, 0)
                 } else {
                     ("out of bounds offset".to_string(), 0, 0)
                 }
