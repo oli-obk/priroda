@@ -2,11 +2,15 @@ fn return_42() -> u64 {
     42
 }
 
-struct MyWrapper(&'static u8);
+struct MyWrapper<'a>(&'a mut u8);
 
 fn main() -> Result<(), std::io::Error> {
-    let my_wrapper = MyWrapper(&2);
-    let _wrapper_ref = &my_wrapper;
+    let mut val = 2;
+    let mut my_wrapper = MyWrapper(&mut val);
+    let wrapper_ref = &mut my_wrapper;
+    for i in 0..16 {
+        *wrapper_ref.0 = i;
+    }
     let abc = Box::new(0);
     return_42();
     let f = 1.4f64;

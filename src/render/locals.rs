@@ -147,7 +147,7 @@ pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>
         Value::ByValPair(val, extra) => {
             match ty.sty {
                 TypeVariants::TyRawPtr(TypeAndMut { ty: &TyS { sty: TypeVariants::TyStr, .. }, .. }) |
-                TypeVariants::TyRef(_, TypeAndMut { ty: &TyS { sty: TypeVariants::TyStr, .. }, .. }) => {
+                TypeVariants::TyRef(_, &TyS { sty: TypeVariants::TyStr, .. }, _) => {
                     if let (PrimVal::Ptr(ptr), PrimVal::Bytes(extra)) = (val, extra) {
                         if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
                             if (ptr.offset as u128) < allocation.bytes.len() as u128 {
