@@ -31,11 +31,18 @@ mod step;
 
 use std::boxed::FnBox;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use rustc::session::Session;
+use rustc::ty::{self, TyCtxt, ParamEnv};
+use rustc::mir;
+use rustc_driver::{driver, CompilerCalls};
+
 use rocket::State;
 use rocket::fairing::AdHoc;
 use rocket::response::{Flash, Redirect};
 use rocket::response::content::*;
-use rocket::response::status::*;
+use rocket::response::status::BadRequest;
 use promising_future::future_promise;
 
 use miri::{
@@ -43,14 +50,8 @@ use miri::{
     AllocId,
     Place,
 };
+
 use step::BreakpointTree;
-
-use rustc::session::Session;
-use rustc::ty::{self, TyCtxt, ParamEnv};
-use rustc::mir;
-use rustc_driver::{driver, CompilerCalls};
-
-use std::sync::{Arc, Mutex};
 
 fn should_hide_stmt(stmt: &mir::Statement) -> bool {
     use rustc::mir::StatementKind::*;
@@ -66,20 +67,6 @@ pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: EvalContext<'a, 'tcx>,
     bptree: BreakpointTree,
     step_count: &'a mut u128,
-}
-
-impl<'a, 'tcx: 'a> std::ops::Deref for PrirodaContext<'a, 'tcx> {
-    type Target = EvalContext<'a, 'tcx>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.ecx
-    }
-}
-
-impl<'a, 'tcx: 'a> std::ops::DerefMut for PrirodaContext<'a, 'tcx> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.ecx
-    }
 }
 
 type RResult<T> = Result<T, Html<String>>;
@@ -179,11 +166,10 @@ impl PrirodaSender {
 }
 
 macro action_route($name:ident: $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
-    use PrirodaSender;
     use rocket::State;
     use rocket::response::{Flash, Redirect};
     #[get($route)]
-    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Flash<Redirect>> {
+    pub fn $name(sender: State<::PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Flash<Redirect>> {
         sender.do_work_and_redirect(move |$pcx| {
             (||$body)()
         })

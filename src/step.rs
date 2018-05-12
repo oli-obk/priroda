@@ -76,24 +76,24 @@ pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> String
     where F: Fn(&EvalContext) -> ShouldContinue {
     let mut message = None;
     loop {
-        if pcx.stack().len() <= 1 && is_ret(&*pcx) {
+        if pcx.ecx.stack().len() <= 1 && is_ret(&pcx.ecx) {
             break;
         }
-        match pcx.step() {
+        match pcx.ecx.step() {
             Ok(true) => {
                 *pcx.step_count += 1;
-                if let Some(frame) = pcx.stack().last() {
+                if let Some(frame) = pcx.ecx.stack().last() {
                     let blck = &frame.mir.basic_blocks()[frame.block];
                     if frame.stmt != blck.statements.len() {
-                        if ::should_hide_stmt(&blck.statements[frame.stmt]) && !pcx.bptree.is_at_breakpoint(&*pcx) {
+                        if ::should_hide_stmt(&blck.statements[frame.stmt]) && !pcx.bptree.is_at_breakpoint(&pcx.ecx) {
                             continue;
                         }
                     }
                 }
-                if let ShouldContinue::Stop = continue_while(&*pcx) {
+                if let ShouldContinue::Stop = continue_while(&pcx.ecx) {
                     break;
                 }
-                if pcx.bptree.is_at_breakpoint(pcx) {
+                if pcx.bptree.is_at_breakpoint(&pcx.ecx) {
                     break;
                 }
             }
@@ -197,7 +197,7 @@ pub mod step_routes {
     }
 
     action_route!(restart: "/restart", |pcx| {
-        pcx.ecx = ::create_ecx(pcx.tcx.sess, pcx.tcx.tcx);
+        pcx.ecx = ::create_ecx(pcx.ecx.tcx.sess, pcx.ecx.tcx.tcx);
         "restarted".to_string()
     });
 
@@ -206,7 +206,7 @@ pub mod step_routes {
     });
 
     action_route!(single_back: "/single_back", |pcx| {
-        pcx.ecx = ::create_ecx(pcx.tcx.sess, pcx.tcx.tcx);
+        pcx.ecx = ::create_ecx(pcx.ecx.tcx.sess, pcx.ecx.tcx.tcx);
         if *pcx.step_count > 0 {
             *pcx.step_count -= 1;
             for _ in 0..*pcx.step_count {
@@ -222,9 +222,9 @@ pub mod step_routes {
     });
 
     action_route!(next: "/next", |pcx| {
-        let frame = pcx.stack().len();
-        let stmt = pcx.frame().stmt;
-        let block = pcx.frame().block;
+        let frame = pcx.ecx.stack().len();
+        let stmt = pcx.ecx.frame().stmt;
+        let block = pcx.ecx.frame().block;
         step(pcx, |ecx| {
             if ecx.stack().len() <= frame && (block < ecx.frame().block || stmt < ecx.frame().stmt) {
                 ShouldContinue::Stop
@@ -235,7 +235,7 @@ pub mod step_routes {
     });
 
     action_route!(return_: "/return", |pcx| {
-        let frame = pcx.stack().len();
+        let frame = pcx.ecx.stack().len();
         step(pcx, |ecx| {
             if ecx.stack().len() <= frame && is_ret(&ecx) {
                 ShouldContinue::Stop
