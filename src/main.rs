@@ -62,8 +62,6 @@ fn should_hide_stmt(stmt: &mir::Statement) -> bool {
 
 type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, 'tcx, miri::Evaluator<'tcx>>;
 
-type PrirodaSender = Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>;
-
 pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: EvalContext<'a, 'tcx>,
     bptree: BreakpointTree,
@@ -151,32 +149,51 @@ fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> E
     ecx
 }
 
-macro do_work($sender:expr, |$pcx:ident| $body:block) {{
-    let (future, promise) = future_promise();
-    let sender = $sender.lock().unwrap_or_else(|err|err.into_inner());
-    match sender.send(Box::new(move |$pcx: &mut PrirodaContext| {
-        promise.set({$body});
-    })) {
-        Ok(()) => match future.value() {
-            Some(val) => Ok(val),
-            None => Err(Html("<center><h1>Miri crashed please go to <a href='/'>index</a></h1></center>".to_string()))
-        },
-        Err(_) => {
-            Err(Html("<center><h1>Miri crashed too often. Please restart priroda.</h1></center>".to_string()))
+pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>);
+
+impl PrirodaSender {
+    fn do_work<'r, T, F>(&self, f: F) -> Result<T, Html<String>>
+        where T: rocket::response::Responder<'r> + Send + 'static,
+              F: FnOnce(&mut PrirodaContext) -> T + Send + 'static {
+        let (future, promise) = future_promise();
+        let sender = self.0.lock().unwrap_or_else(|err|err.into_inner());
+        match sender.send(Box::new(move |pcx: &mut PrirodaContext| {
+            promise.set(f(pcx));
+        })) {
+            Ok(()) => match future.value() {
+                Some(val) => Ok(val),
+                None => Err(Html("<center><h1>Miri crashed please go to <a href='/'>index</a></h1></center>".to_string()))
+            },
+            Err(_) => {
+                Err(Html("<center><h1>Miri crashed too often. Please restart priroda.</h1></center>".to_string()))
+            }
         }
     }
-}}
 
-macro do_work_and_redirect($sender:expr, |$pcx:ident| $body:block) {
-    do_work!($sender, |$pcx| {
-        Flash::success(Redirect::to("/"), {$body})
-    })
+    fn do_work_and_redirect<'r, F>(&self, f: F) -> Result<Flash<Redirect>, Html<String>>
+        where F: FnOnce(&mut PrirodaContext) -> String + Send + 'static {
+        self.do_work(move |pcx| {
+            Flash::success(Redirect::to("/"), f(pcx))
+        })
+    }
+}
+
+macro action_route($name:ident: $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
+    use PrirodaSender;
+    use rocket::State;
+    use rocket::response::{Flash, Redirect};
+    #[get($route)]
+    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Flash<Redirect>> {
+        sender.do_work_and_redirect(move |$pcx| {
+            (||$body)()
+        })
+    }
 }
 
 #[get("/please_panic")]
 #[allow(unreachable_code)]
 fn please_panic(sender: State<PrirodaSender>) -> RResult<()> {
-    do_work!(sender, |_pcx| {
+    sender.do_work(|_pcx| {
         panic!("You requested a panic");
     })
 }
@@ -234,7 +251,7 @@ fn main() {
 
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
-    let sender: PrirodaSender = Mutex::new(sender);
+    let sender = PrirodaSender(Mutex::new(sender));
     let step_count = Arc::new(Mutex::new(0));
 
     let handle = std::thread::spawn(move || {

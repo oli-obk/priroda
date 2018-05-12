@@ -72,7 +72,7 @@ impl<'a> LocalBreakpoints<'a> {
     }
 }
 
-pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> Option<String>
+pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> String
     where F: Fn(&EvalContext) -> ShouldContinue {
     let mut message = None;
     loop {
@@ -107,7 +107,7 @@ pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> Option<String>
             }
         }
     }
-    message
+    message.unwrap_or_else(String::new)
 }
 
 pub fn is_ret(ecx: &EvalContext) -> bool {
@@ -181,19 +181,8 @@ fn parse_breakpoint_from_url(s: &str) -> Result<Breakpoint, String> {
     Ok(Breakpoint(def_id, bb, stmt))
 }
 
-macro simple_route($name:ident: $route:expr, |$pcx:ident| $body:block) {
-    use {PrirodaSender, do_work_and_redirect};
-    use rocket::State;
-    use rocket::response::{Flash, Redirect};
-    #[get($route)]
-    pub fn $name(sender: State<PrirodaSender>) -> ::RResult<Flash<Redirect>> {
-        do_work_and_redirect!(sender, |$pcx| {
-            (||$body)().unwrap_or_else(||String::new())
-        })
-    }
-}
-
 pub mod step_routes {
+    use ::action_route;
     use super::*;
 
     pub fn routes() -> Vec<::rocket::Route> {
@@ -207,32 +196,32 @@ pub mod step_routes {
         ]
     }
 
-    simple_route!(restart: "/restart", |pcx| {
+    action_route!(restart: "/restart", |pcx| {
         pcx.ecx = ::create_ecx(pcx.tcx.sess, pcx.tcx.tcx);
-        Some("restarted".to_string())
+        "restarted".to_string()
     });
 
-    simple_route!(single: "/single", |pcx| {
+    action_route!(single: "/single", |pcx| {
         step(pcx, |_ecx| ShouldContinue::Stop)
     });
 
-    simple_route!(single_back: "/single_back", |pcx| {
+    action_route!(single_back: "/single_back", |pcx| {
         pcx.ecx = ::create_ecx(pcx.tcx.sess, pcx.tcx.tcx);
         if *pcx.step_count > 0 {
             *pcx.step_count -= 1;
             for _ in 0..*pcx.step_count {
                 match pcx.ecx.step() {
                     Ok(true) => {}
-                    res => return Some(format!("Miri is not deterministic causing error {:?}", res)),
+                    res => return format!("Miri is not deterministic causing error {:?}", res),
                 }
             }
-            Some("stepped back".to_string())
+            "stepped back".to_string()
         } else {
-            Some("already at the start".to_string())
+            "already at the start".to_string()
         }
     });
 
-    simple_route!(next: "/next", |pcx| {
+    action_route!(next: "/next", |pcx| {
         let frame = pcx.stack().len();
         let stmt = pcx.frame().stmt;
         let block = pcx.frame().block;
@@ -245,7 +234,7 @@ pub mod step_routes {
         })
     });
 
-    simple_route!(return_: "/return", |pcx| {
+    action_route!(return_: "/return", |pcx| {
         let frame = pcx.stack().len();
         step(pcx, |ecx| {
             if ecx.stack().len() <= frame && is_ret(&ecx) {
@@ -256,17 +245,15 @@ pub mod step_routes {
         })
     });
 
-    simple_route!(continue_: "/continue", |pcx| {
+    action_route!(continue_: "/continue", |pcx| {
         step(pcx, |_ecx| ShouldContinue::Continue)
     });
 }
 
 pub mod bp_routes {
+    use ::action_route;
     use super::*;
     use std::path::PathBuf;
-    use {PrirodaSender, do_work_and_redirect};
-    use rocket::State;
-    use rocket::response::{Flash, Redirect};
 
     pub fn routes() -> Vec<::rocket::Route> {
         routes! [
@@ -277,53 +264,41 @@ pub mod bp_routes {
         ]
     }
 
-    #[get("/add_here")]
-    fn add_here(sender: State<PrirodaSender>) -> ::RResult<Flash<Redirect>> {
-        do_work_and_redirect!(sender, |pcx| {
-            let frame = pcx.ecx.frame();
-            pcx.bptree.add_breakpoint(Breakpoint(frame.instance.def_id(), frame.block, frame.stmt));
-            format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), frame.block.index(), frame.stmt)
-        })
-    }
+    action_route!(add_here: "/add_here", |pcx| {
+        let frame = pcx.ecx.frame();
+        pcx.bptree.add_breakpoint(Breakpoint(frame.instance.def_id(), frame.block, frame.stmt));
+        format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), frame.block.index(), frame.stmt)
+    });
 
-    #[get("/add/<path..>")]
-    fn add(path: PathBuf, sender: State<PrirodaSender>) -> ::RResult<Flash<Redirect>> {
-        do_work_and_redirect!(sender, |pcx| {
-            let path = path.to_string_lossy();
-            let res = parse_breakpoint_from_url(&path);
-            match res {
-                Ok(breakpoint) => {
-                    pcx.bptree.add_breakpoint(breakpoint);
-                    format!("Breakpoint added for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
-                }
-                Err(e) => e,
+    action_route!(add: "/add/<path..>", |pcx, path: PathBuf| {
+        let path = path.to_string_lossy();
+        let res = parse_breakpoint_from_url(&path);
+        match res {
+            Ok(breakpoint) => {
+                pcx.bptree.add_breakpoint(breakpoint);
+                format!("Breakpoint added for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
             }
-        })
-    }
+            Err(e) => e,
+        }
+    });
 
-    #[get("/remove/<path..>")]
-    fn remove(path: PathBuf, sender: State<PrirodaSender>) -> ::RResult<Flash<Redirect>> {
-        do_work_and_redirect!(sender, |pcx| {
-            let path = path.to_string_lossy();
-            let res = parse_breakpoint_from_url(&path);
-            match res {
-                Ok(breakpoint) => {
-                    if pcx.bptree.remove_breakpoint(breakpoint) {
-                        format!("Breakpoint removed for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
-                    } else {
-                        format!("No breakpoint for for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
-                    }
+    action_route!(remove: "/remove/<path..>", |pcx, path: PathBuf| {
+        let path = path.to_string_lossy();
+        let res = parse_breakpoint_from_url(&path);
+        match res {
+            Ok(breakpoint) => {
+                if pcx.bptree.remove_breakpoint(breakpoint) {
+                    format!("Breakpoint removed for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
+                } else {
+                    format!("No breakpoint for for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
                 }
-                Err(e) => e,
             }
-        })
-    }
+            Err(e) => e,
+        }
+    });
 
-    #[get("/remove_all")]
-    fn remove_all(sender: State<PrirodaSender>) -> ::RResult<Flash<Redirect>> {
-        do_work_and_redirect!(sender, |pcx| {
-            pcx.bptree.remove_all();
-            "All breakpoints removed".to_string()
-        })
-    }
+    action_route!(remove_all: "/remove_all", |pcx| {
+        pcx.bptree.remove_all();
+        "All breakpoints removed".to_string()
+    });
 }

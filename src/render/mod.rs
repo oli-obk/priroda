@@ -234,7 +234,7 @@ pub mod routes {
 
     #[get("/")]
     fn index(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-        do_work!(sender, |pcx| {
+        sender.do_work(|pcx| {
             if let Some(flash) = flash {
                 render::set_flash_message(flash.msg().to_string());
             }
@@ -244,7 +244,7 @@ pub mod routes {
 
     #[get("/frame/<frame>")]
     fn frame(sender: State<PrirodaSender>, frame: usize) -> RResult<Html<String>> {
-        do_work!(sender, |pcx| {
+        sender.do_work(move |pcx| {
             render::render_main_window(pcx, Some(frame))
         })
     }
@@ -256,7 +256,7 @@ pub mod routes {
 
     #[get("/ptr/<path..>")]
     fn ptr(path: PathBuf, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-        do_work!(sender, |pcx| {
+        sender.do_work(move |pcx| {
             let path = path.to_string_lossy();
             let mut matches = path.split('/');
             render::render_ptr_memory(pcx, matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse))
@@ -265,7 +265,7 @@ pub mod routes {
 
     #[get("/reverse_ptr/<ptr>")]
     fn reverse_ptr(ptr: String, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-        do_work!(sender, |pcx| {
+        sender.do_work(move |pcx| {
             render::render_reverse_ptr(pcx, Some(ptr.parse()))
         })
     }
