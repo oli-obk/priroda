@@ -64,12 +64,12 @@ pub fn render_main_window(
             head {
                 title { : filename.to_str().unwrap() }
                 meta(charset = "UTF-8") {}
-                script(type="text/javascript") { : Raw(include_str!("../../svg-pan-zoom.js")) }
-                script(type="text/javascript") { : Raw(include_str!("../../zoom_mir.js")) }
+                script(src="/resources/svg-pan-zoom.js") {}
+                script(src="/resources/zoom_mir.js") {}
             }
             body(onload="enable_mir_mousewheel()") {
-                style { : Raw(include_str!("../../style.css")) }
-                style { : Raw(include_str!("../../positioning.css")) }
+                link(rel="stylesheet", href="/resources/style.css");
+                link(rel="stylesheet", href="/resources/positioning.css");
                 div(id="left") {
                     div(id="commands") {
                         @ if is_active_stack_frame {

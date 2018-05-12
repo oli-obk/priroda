@@ -28,3 +28,6 @@ rocket_codegen = "0.3.8"
 
 [target.heroku]
 version = "nightly"
+
+[features]
+static_resources = []

@@ -198,11 +198,43 @@ fn please_panic(sender: State<PrirodaSender>) -> RResult<()> {
     })
 }
 
+#[get("/favicon.ico")]
+fn favicon() -> rocket::response::Content<Vec<u8>> {
+    Content(rocket::http::ContentType::BMP, ::std::fs::read("./resources/favicon.ico").unwrap())
+}
+
+#[cfg(not(feature="static_resources"))]
+#[get("/resources/<path..>")]
+fn resources(path: PathBuf) -> Result<Result<Css<String>, JavaScript<String>>, std::io::Error> {
+    use std::io::{Error, ErrorKind};
+    let mut res_path = PathBuf::from("./resources/");
+    res_path.push(path);
+    let content = ::std::fs::read_to_string(&res_path)?;
+    match res_path.extension().and_then(|ext|ext.to_str()) {
+        Some("css") => Ok(Ok(Css(content))),
+        Some("js") => Ok(Err(JavaScript(content))),
+        _ => Err(Error::new(ErrorKind::InvalidInput, "Invalid extension")),
+    }
+}
+
+#[cfg(feature="static_resources")]
+#[get("/resources/<path..>")]
+fn resources(path: PathBuf) -> Result<Result<Css<&'static str>, JavaScript<&'static str>>, std::io::Error> {
+    use std::io::{Error, ErrorKind};
+    match path.as_os_str().to_str() {
+        Some("svg-pan-zoom.js") => Ok(Err(JavaScript(include_str!("../resources/svg-pan-zoom.js")))),
+        Some("zoom_mir.js") => Ok(Err(JavaScript(include_str!("../resources/zoom_mir.js")))),
+        Some("style.css") => Ok(Ok(Css(include_str!("../resources/style.css")))),
+        Some("positioning.css") => Ok(Ok(Css(include_str!("../resources/positioning.css")))),
+        _ => Err(Error::new(ErrorKind::InvalidInput, "Unknown resource")),
+    }
+}
+
 fn server(sender: PrirodaSender) {
     use rocket::config::Value;
     rocket::ignite()
         .manage(sender)
-        .mount("/", routes![please_panic])
+        .mount("/", routes![please_panic, favicon, resources])
         .mount("/", render::routes::routes())
         .mount("breakpoints", step::bp_routes::routes())
         .mount("step", step::step_routes::routes())
