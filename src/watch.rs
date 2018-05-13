@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::io::Write as IoWrite;
 
+use rustc::hir::def_id::DefId;
 use rustc::mir::interpret::{MemoryPointer, Allocation};
 use rustc::ty::layout::Size;
 
@@ -9,6 +11,7 @@ use ::*;
 #[derive(Debug)]
 pub struct Traces {
     alloc_traces: HashMap<AllocId, AllocTrace>,
+    stack_traces: Vec<(Vec<(DefId,)>, u128)>,
 }
 
 impl Traces {
@@ -19,6 +22,7 @@ impl Traces {
         //}
         Traces {
             alloc_traces,
+            stack_traces: Vec::new(),
         }
     }
 }
@@ -31,7 +35,7 @@ struct AllocTrace {
 impl AllocTrace {
     fn new() -> Self {
         AllocTrace {
-            trace_points: Vec::new()
+            trace_points: Vec::new(),
         }
     }
 }
@@ -56,6 +60,7 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
         }
     });
 
+    // Collect alloc traces
     for (alloc_id, alloc_trace) in pcx.traces.alloc_traces.iter_mut() {
         if let Ok(alloc) = pcx.ecx.memory.get(*alloc_id) {
             if let Some(&(prev_step_count, AllocTracePoint::Changed(ref prev_alloc))) = alloc_trace.trace_points.last() {
@@ -78,6 +83,16 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
                 alloc_trace.trace_points.push((*pcx.step_count, AllocTracePoint::Deallocated));
             }
         }
+    }
+
+    // Collect stack trace
+    let stack_trace = ecx.stack().iter().map(|frame| {
+        (frame.instance.def_id(),)
+    }).collect::<Vec<_>>();
+    if pcx.traces.stack_traces.last().map(|t|&t.0) == Some(&stack_trace) {
+        pcx.traces.stack_traces.last_mut().unwrap().1 += 1;
+    } else {
+        pcx.traces.stack_traces.push((stack_trace, 1));
     }
 }
 
@@ -113,6 +128,13 @@ pub fn show(sender: State<PrirodaSender>) -> RResult<Html<String>> {
                 ).unwrap();
             }
             writeln!(buf, "</table>\n").unwrap();
+        }
+
+        let mut flame_file = ::std::fs::OpenOptions::new().write(true).truncate(true).create(true).open("./flame_graph.txt").unwrap();
+        for (stack_trace, count) in &pcx.traces.stack_traces {
+            writeln!(flame_file, "{} {}", stack_trace.iter().map(|(def_id,)| {
+                pcx.ecx.tcx.absolute_item_path_str(*def_id)
+            }).collect::<Vec<_>>().join(";"), count).unwrap();
         }
         Html(buf)
         //format!("{:#?}", pcx.alloc_traces)
