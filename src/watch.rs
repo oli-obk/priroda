@@ -11,7 +11,8 @@ use ::*;
 #[derive(Debug)]
 pub struct Traces {
     alloc_traces: HashMap<AllocId, AllocTrace>,
-    stack_traces: Vec<(Vec<(DefId,)>, u128)>,
+    stack_traces_cpu: Vec<(Vec<(DefId,)>, u128)>,
+    stack_traces_mem: Vec<((Vec<(DefId,)>, bool), u128)>,
 }
 
 impl Traces {
@@ -22,7 +23,8 @@ impl Traces {
         //}
         Traces {
             alloc_traces,
-            stack_traces: Vec::new(),
+            stack_traces_cpu: Vec::new(),
+            stack_traces_mem: Vec::new(),
         }
     }
 }
@@ -85,14 +87,22 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
         }
     }
 
-    // Collect stack trace
+    // Collect stack traces
     let stack_trace = ecx.stack().iter().map(|frame| {
         (frame.instance.def_id(),)
     }).collect::<Vec<_>>();
-    if pcx.traces.stack_traces.last().map(|t|&t.0) == Some(&stack_trace) {
-        pcx.traces.stack_traces.last_mut().unwrap().1 += 1;
+    insert_stack_trace(&mut pcx.traces.stack_traces_cpu, stack_trace.clone());
+
+    let top_fn_def_id = ecx.stack().last().unwrap().instance.def_id();
+    let top_fn_attrs = ecx.tcx.get_attrs(top_fn_def_id);
+    let top_fn_item_path = ecx.tcx.absolute_item_path_str(top_fn_def_id);
+}
+
+fn insert_stack_trace<T: Eq>(traces: &mut Vec<(T, u128)>, trace: T) {
+    if traces.last().map(|t|&t.0) == Some(&trace) {
+        traces.last_mut().unwrap().1 += 1;
     } else {
-        pcx.traces.stack_traces.push((stack_trace, 1));
+        traces.push((trace, 1));
     }
 }
 
@@ -130,9 +140,16 @@ pub fn show(sender: State<PrirodaSender>) -> RResult<Html<String>> {
             writeln!(buf, "</table>\n").unwrap();
         }
 
-        let mut flame_file = ::std::fs::OpenOptions::new().write(true).truncate(true).create(true).open("./flame_graph.txt").unwrap();
-        for (stack_trace, count) in &pcx.traces.stack_traces {
-            writeln!(flame_file, "{} {}", stack_trace.iter().map(|(def_id,)| {
+        let mut flame_file_cpu = ::std::fs::OpenOptions::new().write(true).truncate(true).create(true).open("./flame_graph_cpu.txt").unwrap();
+        for (stack_trace, count) in &pcx.traces.stack_traces_cpu {
+            writeln!(flame_file_cpu, "{} {}", stack_trace.iter().map(|(def_id,)| {
+                pcx.ecx.tcx.absolute_item_path_str(*def_id)
+            }).collect::<Vec<_>>().join(";"), count).unwrap();
+        }
+
+        let mut flame_file_mem = ::std::fs::OpenOptions::new().write(true).truncate(true).create(true).open("./flame_graph_mem.txt").unwrap();
+        for ((stack_trace, _), count) in &pcx.traces.stack_traces_mem {
+            writeln!(flame_file_mem, "{} {}", stack_trace.iter().map(|(def_id,)| {
                 pcx.ecx.tcx.absolute_item_path_str(*def_id)
             }).collect::<Vec<_>>().join(";"), count).unwrap();
         }
