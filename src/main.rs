@@ -6,7 +6,9 @@
 extern crate rocket;
 extern crate getopts;
 extern crate miri;
+#[macro_use]
 extern crate rustc;
+extern crate rustc_mir;
 extern crate rustc_driver;
 extern crate rustc_data_structures;
 extern crate graphviz as dot;
