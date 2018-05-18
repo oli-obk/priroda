@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use rustc::hir::def_id::DefId;
+use rustc::ty::Instance;
 use rustc::mir::interpret::{MemoryPointer, Allocation};
 use rustc::ty::layout::Size;
 
@@ -10,13 +10,13 @@ use ::*;
 mod stack_trace;
 
 #[derive(Debug)]
-pub struct Traces {
+pub struct Traces<'tcx> {
     alloc_traces: HashMap<AllocId, AllocTrace>,
-    stack_traces_cpu: Vec<(Vec<(DefId,)>, u128)>,
-    stack_traces_mem: Vec<((Vec<(DefId,)>, bool), u128)>,
+    stack_traces_cpu: Vec<(Vec<(Instance<'tcx>,)>, u128)>,
+    stack_traces_mem: Vec<((Vec<(Instance<'tcx>,)>, bool), u128)>,
 }
 
-impl Traces {
+impl<'tcx> Traces<'tcx> {
     pub fn new() -> Self {
         let alloc_traces = HashMap::new();
         //for i in 0..700 {

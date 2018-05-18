@@ -1,4 +1,4 @@
-#![feature(rustc_private, custom_attribute, decl_macro, plugin, fnbox)]
+#![feature(rustc_private, custom_attribute, decl_macro, plugin, fnbox, catch_expr)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
 #![plugin(rocket_codegen)]
@@ -46,6 +46,7 @@ use rocket::fairing::AdHoc;
 use rocket::response::{Flash, Redirect};
 use rocket::response::content::*;
 use rocket::response::status::BadRequest;
+use rocket::http::ContentType;
 use promising_future::future_promise;
 
 use miri::{
@@ -71,7 +72,7 @@ pub struct PrirodaContext<'a, 'tcx: 'a> {
     bptree: BreakpointTree,
     step_count: &'a mut u128,
     auto_refresh: bool,
-    traces: watch::Traces,
+    traces: watch::Traces<'tcx>,
 }
 
 type RResult<T> = Result<T, Html<String>>;
@@ -198,27 +199,31 @@ fn favicon() -> rocket::response::Content<Vec<u8>> {
 
 #[cfg(not(feature="static_resources"))]
 #[get("/resources/<path..>")]
-fn resources(path: PathBuf) -> Result<Result<Css<String>, JavaScript<String>>, std::io::Error> {
+fn resources(path: PathBuf) -> Result<Content<String>, std::io::Error> {
     use std::io::{Error, ErrorKind};
     let mut res_path = PathBuf::from("./resources/");
     res_path.push(path);
     let content = ::std::fs::read_to_string(&res_path)?;
-    match res_path.extension().and_then(|ext|ext.to_str()) {
-        Some("css") => Ok(Ok(Css(content))),
-        Some("js") => Ok(Err(JavaScript(content))),
-        _ => Err(Error::new(ErrorKind::InvalidInput, "Invalid extension")),
-    }
+    Ok(Content(
+        match res_path.extension().and_then(|ext|ext.to_str()) {
+            Some("css") => ContentType::CSS,
+            Some("js") => ContentType::JavaScript,
+            Some("svg") => ContentType::SVG,
+            _ => Err(Error::new(ErrorKind::InvalidInput, "Invalid extension"))?,
+        },
+        content
+    ))
 }
 
 #[cfg(feature="static_resources")]
 #[get("/resources/<path..>")]
-fn resources(path: PathBuf) -> Result<Result<Css<&'static str>, JavaScript<&'static str>>, std::io::Error> {
+fn resources(path: PathBuf) -> Result<Content<&'static str>, std::io::Error> {
     use std::io::{Error, ErrorKind};
     match path.as_os_str().to_str() {
-        Some("svg-pan-zoom.js") => Ok(Err(JavaScript(include_str!("../resources/svg-pan-zoom.js")))),
-        Some("zoom_mir.js") => Ok(Err(JavaScript(include_str!("../resources/zoom_mir.js")))),
-        Some("style.css") => Ok(Ok(Css(include_str!("../resources/style.css")))),
-        Some("positioning.css") => Ok(Ok(Css(include_str!("../resources/positioning.css")))),
+        Some("svg-pan-zoom.js") => Ok(Content(ContentType::JavaScript, include_str!("../resources/svg-pan-zoom.js"))),
+        Some("zoom_mir.js") => Ok(Content(ContentType::JavaScript, include_str!("../resources/zoom_mir.js"))),
+        Some("style.css") => Ok(Content(ContentType::CSS, include_str!("../resources/style.css"))),
+        Some("positioning.css") => Ok(Content(ContentType::CSS, include_str!("../resources/positioning.css"))),
         _ => Err(Error::new(ErrorKind::InvalidInput, "Unknown resource")),
     }
 }
