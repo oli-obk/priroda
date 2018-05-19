@@ -108,12 +108,21 @@ pub(super) fn show(pcx: &mut PrirodaContext, buf: &mut impl Write) -> io::Result
 fn create_flame_graph<'a, 'tcx: 'a, T>(ecx: &EvalContext<'a, 'tcx>, mut buf: impl Write, traces: &Vec<(T, u128)>, get_trace: impl Fn(&T) -> &[(Instance<'tcx>,)], name: &str, count_name: &str, color_scheme: &str, _file_name: &str) -> io::Result<()> {
     let mut flame_data = String::new();
     for (stack_trace, count) in traces {
+        let mut last_crate = ::rustc::hir::def_id::LOCAL_CRATE;
         writeln!(flame_data, "{} {}", get_trace(stack_trace).iter().map(|(instance,)| {
             let mut name = ecx.tcx.absolute_item_path_str(instance.def_id());
             match instance.def {
                 InstanceDef::Intrinsic(..) => name.push_str("_[k]"),
-                InstanceDef::DropGlue(..) => name.push_str("_[j]"),
-                _ => {}
+                InstanceDef::DropGlue(..) => name.push_str("_[k]"),
+                _ => {
+                    if instance.def_id().is_local() {
+                        name.push_str("_[j]");
+                    }
+                }
+            }
+            if last_crate != instance.def_id().krate {
+                name = "-;".to_string() + &name;
+                last_crate = instance.def_id().krate;
             }
             name
         }).collect::<Vec<_>>().join(";"), count).map_err(|e|io::Error::new(io::ErrorKind::Other, e))?;
