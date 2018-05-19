@@ -26,7 +26,7 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
             Call { ref func, ref args, .. } => {
                 let instance = instance_for_call_operand(ecx, func);
                 let item_path = ecx.tcx.absolute_item_path_str(instance.def_id());
-                println!("{}", item_path);
+                //println!("{}", item_path);
 
                 stack_trace.push((instance,));
                 insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);

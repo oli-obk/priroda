@@ -28,6 +28,17 @@ impl<'tcx> Traces<'tcx> {
             stack_traces_mem: Vec::new(),
         }
     }
+
+    /// Clear the traces. This should be called before restarting the evaluation.
+    pub fn clear(&mut self) {
+        // We have to replace all values of alloc_traces by empty AllocTraces,
+        // because stepping back will change the alloc id's
+        self.alloc_traces.clear();
+
+        // We can just empty the stack traces, because they will be rebuild during stepping
+        self.stack_traces_cpu.clear();
+        self.stack_traces_mem.clear();
+    }
 }
 
 #[derive(Debug)]

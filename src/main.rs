@@ -75,6 +75,13 @@ pub struct PrirodaContext<'a, 'tcx: 'a> {
     traces: watch::Traces<'tcx>,
 }
 
+impl<'a, 'tcx: 'a> PrirodaContext<'a, 'tcx> {
+    fn restart(&mut self) {
+        self.traces.clear(); // Cleanup all traces
+        self.ecx = ::create_ecx(self.ecx.tcx.tcx);
+    }
+}
+
 type RResult<T> = Result<T, Html<String>>;
 
 struct MiriCompilerCalls(Arc<Mutex<u128>>, Arc<Mutex<::std::sync::mpsc::Receiver<Box<FnBox(&mut PrirodaContext) + Send>>>>);
@@ -94,7 +101,7 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
             let mut step_count = step_count.lock().unwrap_or_else(|err|err.into_inner());
 
             let mut pcx = PrirodaContext{
-                ecx: create_ecx(state.session, state.tcx.unwrap()),
+                ecx: create_ecx(state.tcx.unwrap()),
                 bptree: step::load_breakpoints_from_file(),
                 step_count: &mut *step_count,
                 auto_refresh: true,
@@ -122,8 +129,8 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
     }
 }
 
-fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
-    let (node_id, span, _) = session.entry_fn.borrow().expect("no main or start function found");
+fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
+    let (node_id, span, _) = tcx.sess.entry_fn.borrow().expect("no main or start function found");
     let main_id = tcx.hir.local_def_id(node_id);
 
     let main_instance = ty::Instance::mono(tcx, main_id);
