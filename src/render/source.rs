@@ -55,8 +55,12 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
     let mut h = RUST_SYNTAX.with(|syntax| HighlightLines::new(syntax, t));
 
     let highlighted_sources = instr_spans.iter().map(|sp| {
+        let _ = codemap.span_to_snippet(*sp); // Ensure file src is loaded
+
         (sp, if let Ok(file_lines) = codemap.span_to_lines(*sp) {
             if let Some(ref src) = file_lines.file.src {
+                Ok(src.to_string())
+            } else if let Some(src) = file_lines.file.external_src.borrow().get_source() {
                 Ok(src.to_string())
             } else {
                 Err("<no source info for span>".to_string())
