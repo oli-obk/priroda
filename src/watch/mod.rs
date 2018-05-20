@@ -105,6 +105,10 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
     stack_trace::step_callback(pcx);
 }
 
+pub fn routes() -> Vec<::rocket::Route> {
+    routes![watch::show, watch::continue_and_show, watch::add]
+}
+
 #[get("/show")]
 pub fn show(sender: State<PrirodaSender>) -> RResult<Html<String>> {
     sender.do_work(move |pcx| {
@@ -144,6 +148,14 @@ pub fn show(sender: State<PrirodaSender>) -> RResult<Html<String>> {
 
         Html(buf)
     })
+}
+
+#[get("/continue_and_show")]
+pub fn continue_and_show(sender: State<PrirodaSender>) -> RResult<Html<String>> {
+    sender.do_work(move |pcx| {
+        ::step::step(pcx, |_ecx| ::step::ShouldContinue::Continue);
+    })?;
+    show(sender)
 }
 
 action_route!(add: "/add/<id>", |pcx, id: u64| {

@@ -255,7 +255,7 @@ fn server(sender: PrirodaSender) {
         .mount("/", render::routes::routes())
         .mount("breakpoints", step::bp_routes::routes())
         .mount("step", step::step_routes::routes())
-        .mount("watch", routes![watch::show, watch::add])
+        .mount("watch", watch::routes())
         .attach(AdHoc::on_launch(|rocket| {
             let config = rocket.config();
             if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {
