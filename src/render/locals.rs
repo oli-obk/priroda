@@ -1,12 +1,14 @@
 use rustc_data_structures::indexed_vec::Idx;
-use rustc::ty::{Ty, TyS, TypeVariants, TypeAndMut};
+use rustc::ty::{Ty, TyS, TypeVariants, TypeAndMut, layout::Size};
 use rustc::mir;
 
 use miri::{
     Frame,
     Value,
     PrimVal,
+    Allocation,
     Pointer,
+    MemoryPointer,
 };
 
 use horrorshow::prelude::*;
@@ -91,7 +93,7 @@ pub fn render_locals<'a, 'tcx: 'a>(ecx: &EvalContext<'a, 'tcx>, frame: Option<&F
 pub fn print_primval(ty: Option<Ty>, val: PrimVal) -> String {
     match val {
         PrimVal::Undef => "&lt;undef &gt;".to_string(),
-        PrimVal::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id.0, offset = ptr.offset),
+        PrimVal::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id.0, offset = ptr.offset.bytes()),
         PrimVal::Bytes(bytes) => {
             match ty {
                 Some(&TyS { sty: TypeVariants::TyBool, ..}) => {
@@ -150,8 +152,8 @@ pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>
                 TypeVariants::TyRef(_, &TyS { sty: TypeVariants::TyStr, .. }, _) => {
                     if let (PrimVal::Ptr(ptr), PrimVal::Bytes(extra)) = (val, extra) {
                         if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
-                            if (ptr.offset as u128) < allocation.bytes.len() as u128 {
-                                let bytes = &allocation.bytes[ptr.offset as usize..];
+                            if (ptr.offset.bytes() as u128) < allocation.bytes.len() as u128 {
+                                let bytes = &allocation.bytes[ptr.offset.bytes() as usize..];
                                 let s = String::from_utf8_lossy(bytes);
                                 return Ok((None, format!("\"{}\" ({}, {})", s, print_primval(None, val), extra)));
                             }
@@ -170,31 +172,7 @@ pub fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String
     let ptr = ptr.to_ptr().map_err(|_| ())?;
     match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr)) {
         (Ok(alloc), Err(_)) => {
-            use std::fmt::Write;
-            let mut s = String::new();
-            let mut i = 0;
-            while i < alloc.bytes.len() as u64 {
-                if let Some(&reloc) = alloc.relocations.get(&i) {
-                    i += ecx.memory().pointer_size();
-                    write!(&mut s,
-                        "<a style=\"text-decoration: none\" href=\"/ptr/{alloc}/{offset}\">┠{nil:─<wdt$}┨</a>",
-                        alloc = reloc.0,
-                        offset = ptr.offset,
-                        nil = "",
-                        wdt = (ecx.memory().pointer_size() * 2 - 2) as usize,
-                    ).unwrap();
-                } else {
-                    if alloc.undef_mask.is_range_defined(i, i + 1) {
-                        write!(&mut s, "{:02x}", alloc.bytes[i as usize] as usize).unwrap();
-                    } else {
-                        let ub_chars = ['∅','∆','∇','∓','∞','⊙','⊠','⊘','⊗','⊛','⊝','⊡','⊠'];
-                        let c1 = (ptr.alloc_id.0 * 769 + i as u64 * 5689) as usize % ub_chars.len();
-                        let c2 = (ptr.alloc_id.0 * 997 + i as u64 * 7193) as usize % ub_chars.len();
-                        write!(&mut s, "<mark>{}{}</mark>", ub_chars[c1], ub_chars[c2]).unwrap();
-                    }
-                    i += 1;
-                }
-            }
+            let s = print_alloc(ecx.memory().pointer_size().bytes(), ptr, alloc);
             Ok((Some(ptr.alloc_id.0), s, alloc.bytes.len() as u64))
         },
         (Err(_), Ok(_)) => {
@@ -204,4 +182,33 @@ pub fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String
         (Err(_), Err(_)) => Err(()),
         (Ok(_), Ok(_)) => unreachable!(),
     }
+}
+
+pub fn print_alloc(ptr_size: u64, ptr: MemoryPointer, alloc: &Allocation) -> String {
+    use std::fmt::Write;
+    let mut s = String::new();
+    let mut i = 0;
+    while i < alloc.bytes.len() as u64 {
+        if let Some(&reloc) = alloc.relocations.get(&Size::from_bytes(i)) {
+            i += ptr_size;
+            write!(&mut s,
+                "<a style=\"text-decoration: none\" href=\"/ptr/{alloc}/{offset}\">┠{nil:─<wdt$}┨</a>",
+                alloc = reloc.0,
+                offset = ptr.offset.bytes(),
+                nil = "",
+                wdt = (ptr_size * 2 - 2) as usize,
+            ).unwrap();
+        } else {
+            if alloc.undef_mask.is_range_defined(Size::from_bytes(i), Size::from_bytes(i + 1)) {
+                write!(&mut s, "{:02x}", alloc.bytes[i as usize] as usize).unwrap();
+            } else {
+                let ub_chars = ['∅','∆','∇','∓','∞','⊙','⊠','⊘','⊗','⊛','⊝','⊡','⊠'];
+                let c1 = (ptr.alloc_id.0 * 769 + i as u64 * 5689) as usize % ub_chars.len();
+                let c2 = (ptr.alloc_id.0 * 997 + i as u64 * 7193) as usize % ub_chars.len();
+                write!(&mut s, "<mark>{}{}</mark>", ub_chars[c1], ub_chars[c2]).unwrap();
+            }
+            i += 1;
+        }
+    }
+    s
 }

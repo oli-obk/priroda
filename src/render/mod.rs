@@ -3,6 +3,7 @@ mod locals;
 mod source;
 
 use rustc::hir::map::definitions::DefPathData;
+use rustc::ty::layout::Size;
 
 use rocket::response::content::Html;
 use horrorshow::Template;
@@ -174,7 +175,7 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
             let (mem, offset, rest) =
                 if let Ok((_, mem, bytes)) = locals::print_ptr(&pcx.ecx, MemoryPointer {
                     alloc_id,
-                    offset,
+                    offset: Size::from_bytes(offset),
             }.into()) {
                 if bytes * 2 > offset {
                     (mem, offset, (bytes * 2 - offset - 1) as usize)

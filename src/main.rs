@@ -125,7 +125,7 @@ fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> E
 
     let return_type = main_mir.return_ty();
     let return_layout = tcx.layout_of(ParamEnv::reveal_all().and(return_type)).expect("couldnt get layout for return pointer");
-    let return_ptr = ecx.memory.allocate(return_layout.size.bytes(), return_layout.align, None).unwrap();
+    let return_ptr = ecx.memory.allocate(return_layout.size, return_layout.align, None).unwrap();
     ecx.push_stack_frame(
         main_instance,
         span,
