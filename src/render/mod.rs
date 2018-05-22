@@ -6,7 +6,7 @@ use rustc::hir::map::definitions::DefPathData;
 use rustc::ty::layout::Size;
 
 use rocket::response::content::Html;
-use horrorshow::Template;
+use horrorshow::{Raw, Template};
 
 use miri::{
     Frame,
@@ -16,6 +16,28 @@ use miri::{
 
 use PrirodaContext;
 use step::Breakpoint;
+
+pub fn refresh_script(pcx: &PrirodaContext) -> String {
+    if pcx.auto_refresh {
+        r#"<script>
+            setInterval(() => {
+                fetch("/step_count").then((res) => {
+                    if(res.status == 200) {
+                        return res.text();
+                    } else {
+                        throw "";
+                    }
+                }).then((res) => {
+                    if(res != #step_count#) {
+                        window.location.reload();
+                    }
+                }).catch(()=>{});
+            }, 1000);
+        </script>"#.replace("#step_count#", &format!("{}", pcx.step_count))
+    } else {
+        String::new()
+    }
+}
 
 pub fn render_main_window(
     pcx: &PrirodaContext,
@@ -58,6 +80,7 @@ pub fn render_main_window(
                 meta(charset = "UTF-8") {}
                 script(src="/resources/svg-pan-zoom.js") {}
                 script(src="/resources/zoom_mir.js") {}
+                : Raw(refresh_script(pcx))
             }
             body(onload="enable_mir_mousewheel()") {
                 link(rel="stylesheet", href="/resources/style.css");
@@ -142,6 +165,7 @@ pub fn render_reverse_ptr<ERR: ::std::fmt::Debug>(
                 head {
                     title { : format!("Allocations with pointers to Allocation {}", alloc_id) }
                     meta(charset = "UTF-8") {}
+                    : Raw(refresh_script(pcx))
                 }
                 body {
                     @for id in allocs {
@@ -189,6 +213,7 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
                 head {
                     title { : format!("Allocation {}", alloc_id) }
                     meta(charset = "UTF-8") {}
+                    : Raw(refresh_script(pcx))
                 }
                 body {
                     span(style="font-family: monospace") {

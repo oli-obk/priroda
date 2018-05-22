@@ -67,6 +67,7 @@ pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: EvalContext<'a, 'tcx>,
     bptree: BreakpointTree,
     step_count: &'a mut u128,
+    auto_refresh: bool,
 }
 
 type RResult<T> = Result<T, Html<String>>;
@@ -91,6 +92,7 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
                 ecx: create_ecx(state.session, state.tcx.unwrap()),
                 bptree: step::load_breakpoints_from_file(),
                 step_count: &mut *step_count,
+                auto_refresh: true,
             };
 
             // Step to the position where miri crashed if it crashed
@@ -216,11 +218,23 @@ fn resources(path: PathBuf) -> Result<Result<Css<&'static str>, JavaScript<&'sta
     }
 }
 
+#[get("/step_count")]
+fn step_count(sender: State<PrirodaSender>) -> RResult<String> {
+    sender.do_work(|pcx| {
+        format!("{}", pcx.step_count)
+    })
+}
+
+action_route!(disable_auto_refresh: "/disable_auto_refresh", |pcx| {
+        pcx.auto_refresh = false;
+        "auto refresh disabled".to_string()
+    });
+
 fn server(sender: PrirodaSender) {
     use rocket::config::Value;
     rocket::ignite()
         .manage(sender)
-        .mount("/", routes![please_panic, favicon, resources])
+        .mount("/", routes![please_panic, favicon, resources, step_count, disable_auto_refresh])
         .mount("/", render::routes::routes())
         .mount("breakpoints", step::bp_routes::routes())
         .mount("step", step::step_routes::routes())
