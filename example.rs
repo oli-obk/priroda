@@ -9,7 +9,20 @@ fn some_fn() {
 
 struct MyWrapper<'a>(&'a mut u8);
 
+struct SomeRandomStruct {
+    ernrer: u8,
+    feijoc: u64,
+    ioieoe: bool,
+    fewije: char,
+}
+
 fn main() -> Result<(), std::io::Error> {
+    let _rer = SomeRandomStruct {
+        ernrer: 24,
+        feijoc: 34438,
+        ioieoe: true,
+        fewije: '@',
+    };
     let abc = Box::new(0);
     some_fn();
     let f = 1.4f64;
