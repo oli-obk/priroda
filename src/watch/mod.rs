@@ -13,7 +13,7 @@ mod stack_trace;
 pub struct Traces<'tcx> {
     alloc_traces: HashMap<AllocId, AllocTrace>,
     stack_traces_cpu: Vec<(Vec<(Instance<'tcx>,)>, u128)>,
-    stack_traces_mem: Vec<((Vec<(Instance<'tcx>,)>, bool), u128)>,
+    stack_traces_mem: Vec<(Vec<(Instance<'tcx>,)>, u128)>,
 }
 
 impl<'tcx> Traces<'tcx> {
@@ -68,12 +68,13 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
 
         // Remove all interned statics
         traces.alloc_traces.retain(|alloc_id, alloc_trace| {
-            if ecx.tcx.tcx.interpret_interner.get_alloc(*alloc_id).is_none() {
+            /*if ecx.tcx.tcx.interpret_interner.get_alloc(*alloc_id).is_none() {
                 true
             } else {
                 assert!(alloc_trace.trace_points.len() == 0, "at {} {}: {:#?}", step_count, alloc_id, alloc_trace);
                 false
-            }
+            }*/
+            true
         });
 
         // Collect alloc traces

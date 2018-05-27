@@ -39,13 +39,13 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
                     match &item_path[..] {
                         "alloc::alloc::::__rust_alloc" | "alloc::alloc::::__rust_alloc_zeroed" => {
                             let size = ecx.value_to_primval(args[0])?.to_u64()?;
-                            insert_stack_trace(&mut traces.stack_traces_mem, (stack_trace, true), size as u128);
+                            insert_stack_trace(&mut traces.stack_traces_mem, stack_trace, size as u128);
                         }
                         "alloc::alloc::::__rust_realloc" => {
                             let old_size = ecx.value_to_primval(args[1])?.to_u64()?;
                             let new_size = ecx.value_to_primval(args[3])?.to_u64()?;
                             if new_size > old_size {
-                                insert_stack_trace(&mut traces.stack_traces_mem, (stack_trace, true), (new_size - old_size) as u128);
+                                insert_stack_trace(&mut traces.stack_traces_mem, stack_trace, (new_size - old_size) as u128);
                             }
                         }
                         _ => {}
@@ -99,17 +99,17 @@ fn insert_stack_trace<T: Eq>(traces: &mut Vec<(T, u128)>, trace: T, count: u128)
 }
 
 pub(super) fn show(pcx: &mut PrirodaContext, buf: &mut impl Write) -> io::Result<()> {
-    create_flame_graph(&pcx.ecx, &mut *buf, &pcx.traces.stack_traces_cpu, |t| t, "Cpu usage", "instructions", "java", "flame_graph_cpu")?;
-    create_flame_graph(&pcx.ecx, &mut *buf, &pcx.traces.stack_traces_mem, |t| &t.0, "Memory usage", "bytes", "mem", "flame_graph_mem")?;
+    create_flame_graph(&pcx.ecx, &mut *buf, &pcx.traces.stack_traces_cpu, "Cpu usage", "instructions", "java", "flame_graph_cpu")?;
+    create_flame_graph(&pcx.ecx, &mut *buf, &pcx.traces.stack_traces_mem, "Memory usage", "bytes", "mem", "flame_graph_mem")?;
 
     Ok(())
 }
 
-fn create_flame_graph<'a, 'tcx: 'a, T>(ecx: &EvalContext<'a, 'tcx>, mut buf: impl Write, traces: &Vec<(T, u128)>, get_trace: impl Fn(&T) -> &[(Instance<'tcx>,)], name: &str, count_name: &str, color_scheme: &str, _file_name: &str) -> io::Result<()> {
+fn create_flame_graph<'a, 'tcx: 'a>(ecx: &EvalContext<'a, 'tcx>, mut buf: impl Write, traces: &Vec<(Vec<(Instance<'tcx>,)>, u128)>, name: &str, count_name: &str, color_scheme: &str, _file_name: &str) -> io::Result<()> {
     let mut flame_data = String::new();
     for (stack_trace, count) in traces {
         let mut last_crate = ::rustc::hir::def_id::LOCAL_CRATE;
-        writeln!(flame_data, "{} {}", get_trace(stack_trace).iter().map(|(instance,)| {
+        writeln!(flame_data, "{} {}", stack_trace.iter().map(|(instance,)| {
             let mut name = ecx.tcx.absolute_item_path_str(instance.def_id());
             match instance.def {
                 InstanceDef::Intrinsic(..) => name.push_str("_[k]"),
