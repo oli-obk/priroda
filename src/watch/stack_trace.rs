@@ -99,9 +99,10 @@ fn insert_stack_trace<T: Eq>(traces: &mut Vec<(T, u128)>, trace: T, count: u128)
 }
 
 pub(super) fn show(pcx: &mut PrirodaContext, buf: &mut impl Write) -> io::Result<()> {
+    writeln!(buf, "{}\n", ::render::refresh_script(pcx)).unwrap();
     create_flame_graph(&pcx.ecx, &mut *buf, &pcx.traces.stack_traces_cpu, "Cpu usage", "instructions", "java", "flame_graph_cpu")?;
     create_flame_graph(&pcx.ecx, &mut *buf, &pcx.traces.stack_traces_mem, "Memory usage", "bytes", "mem", "flame_graph_mem")?;
-
+    print_stack_traces(&pcx.ecx, &mut *buf, &pcx.traces.stack_traces_cpu).unwrap();
     Ok(())
 }
 
@@ -153,5 +154,19 @@ fn create_flame_graph<'a, 'tcx: 'a>(ecx: &EvalContext<'a, 'tcx>, mut buf: impl W
         Err(err) => writeln!(buf, "<h1><pre>Spawn error: {:?}</pre></h1>", err).unwrap(),
     }
 
+    Ok(())
+}
+
+fn print_stack_traces<'a, 'tcx: 'a>(ecx: &EvalContext<'a, 'tcx>, mut buf: impl Write, traces: &Vec<(Vec<(Instance<'tcx>,)>, u128)>) -> ::std::fmt::Result {
+    let name_for_instance = |i: Instance| {
+        ecx.tcx.absolute_item_path_str(i.def_id()).replace("<", "&lt;").replace(">", "&gt;")
+    };
+    let mut last_stack_trace = &[] as &[_];
+    writeln!(buf, "<h1>Stack trace</h1>\n<ul>\n")?;
+    for (stack_trace, count) in traces {
+        writeln!(buf, "<li>{2}{0} ({1})</li>\n", name_for_instance(stack_trace.last().unwrap().0), count, format!("{nil: <indent$}", nil = "", indent = 4 * (stack_trace.len() - 1)).replace(" ", "&nbsp;"))?;
+        last_stack_trace = stack_trace;
+    }
+    writeln!(buf, "</ul>")?;
     Ok(())
 }
