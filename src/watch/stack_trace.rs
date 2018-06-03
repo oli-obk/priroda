@@ -3,6 +3,7 @@ use std::io::{self, Write as IoWrite};
 use std::process::{Command, Stdio};
 
 use rustc::ty::{Instance, InstanceDef};
+use miri::ScalarExt;
 
 use ::*;
 
@@ -38,12 +39,12 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
                         .collect::<Result<Vec<_>, _>>()?;
                     match &item_path[..] {
                         "alloc::alloc::::__rust_alloc" | "alloc::alloc::::__rust_alloc_zeroed" => {
-                            let size = ecx.value_to_primval(args[0])?.to_u64()?;
+                            let size = ecx.value_to_scalar(args[0])?.to_usize(ecx)?;
                             insert_stack_trace(&mut traces.stack_traces_mem, stack_trace, size as u128);
                         }
                         "alloc::alloc::::__rust_realloc" => {
-                            let old_size = ecx.value_to_primval(args[1])?.to_u64()?;
-                            let new_size = ecx.value_to_primval(args[3])?.to_u64()?;
+                            let old_size = ecx.value_to_scalar(args[1])?.to_usize(ecx)?;
+                            let new_size = ecx.value_to_scalar(args[3])?.to_usize(ecx)?;
                             if new_size > old_size {
                                 insert_stack_trace(&mut traces.stack_traces_mem, stack_trace, (new_size - old_size) as u128);
                             }
@@ -63,7 +64,7 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(ecx: &mut EvalContext<'a, 'tcx>, func
 
         match func.ty.sty {
             ty::TyFnPtr(_) => {
-                let fn_ptr = ecx.value_to_primval(func)?.to_ptr()?;
+                let fn_ptr = ecx.value_to_scalar(func)?.to_ptr()?;
                 let instance = ecx.memory.get_fn(fn_ptr)?;
                 instance
             }

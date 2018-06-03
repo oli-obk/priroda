@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use rustc::ty::Instance;
-use rustc::mir::interpret::{MemoryPointer, Allocation};
+use rustc::mir::interpret::{Pointer, Allocation};
 use rustc::ty::layout::Size;
 
 use ::*;
@@ -131,7 +131,7 @@ pub fn show(sender: State<PrirodaSender>) -> RResult<Html<String>> {
                     AllocTracePoint::Changed(alloc) => {
                         ::render::locals::print_alloc(
                             pcx.ecx.memory().pointer_size().bytes(),
-                            MemoryPointer::new(*alloc_id, Size::from_bytes(0)).into(),
+                            Pointer::new(*alloc_id, Size::from_bytes(0)).into(),
                             alloc
                         )
                     }

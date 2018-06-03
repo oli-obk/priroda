@@ -10,7 +10,7 @@ use horrorshow::{Raw, Template};
 
 use miri::{
     Frame,
-    MemoryPointer,
+    Pointer,
     AllocId,
 };
 
@@ -200,7 +200,7 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
         (Some(Ok(alloc_id)), offset) => {
             let offset = offset.unwrap_or(Ok(0)).expect("already checked in previous arm");
             let (mem, offset, rest) =
-                if let Ok((_, mem, bytes)) = locals::print_ptr(&pcx.ecx, MemoryPointer {
+                if let Ok((_, mem, bytes)) = locals::print_ptr(&pcx.ecx, Pointer {
                     alloc_id,
                     offset: Size::from_bytes(offset),
             }.into()) {

@@ -5,10 +5,9 @@ use rustc::mir;
 use miri::{
     Frame,
     Value,
-    PrimVal,
+    Scalar,
     Allocation,
     Pointer,
-    MemoryPointer,
 };
 
 use horrorshow::prelude::*;
@@ -90,51 +89,50 @@ pub fn render_locals<'a, 'tcx: 'a>(ecx: &EvalContext<'a, 'tcx>, frame: Option<&F
     }).into_string().unwrap()
 }
 
-pub fn print_primval(ty: Option<Ty>, val: PrimVal) -> String {
+pub fn print_primval(ty: Option<Ty>, val: Scalar) -> String {
     match val {
-        PrimVal::Undef => "&lt;undef &gt;".to_string(),
-        PrimVal::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id.0, offset = ptr.offset.bytes()),
-        PrimVal::Bytes(bytes) => {
+        Scalar::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id.0, offset = ptr.offset.bytes()),
+        Scalar::Bits { bits, .. } => {
             match ty {
                 Some(&TyS { sty: TypeVariants::TyBool, ..}) => {
-                    if bytes == 0 {
+                    if bits == 0 {
                         return "false (0)".to_string()
-                    } else if bytes == 1 {
+                    } else if bits == 1 {
                         return "true (1)".to_string()
                     }
                 }
                 Some(&TyS { sty: TypeVariants::TyChar, ..}) => {
-                    if bytes < ::std::u32::MAX as u128 {
-                        let chr = ::std::char::from_u32(bytes as u32).unwrap();
+                    if bits < ::std::u32::MAX as u128 {
+                        let chr = ::std::char::from_u32(bits as u32).unwrap();
                         if chr.is_ascii() {
-                            return format!("'{}' (0x{:08X})", chr, bytes);
+                            return format!("'{}' (0x{:08X})", chr, bits);
                         }
                     }
                 }
                 Some(&TyS { sty: TypeVariants::TyUint(_), ..}) => {
-                    return format!("{0} (0x{0:08X})", bytes);
+                    return format!("{0} (0x{0:08X})", bits);
                 }
                 Some(&TyS { sty: TypeVariants::TyInt(_), ..}) => {
-                    return format!("{0} (0x{0:08X})", bytes as i128);
+                    return format!("{0} (0x{0:08X})", bits as i128);
                 }
                 Some(&TyS { sty: TypeVariants::TyFloat(float_ty), ..}) => {
                     use syntax::ast::FloatTy::*;
                     match float_ty {
                         F32 => {
-                            if bytes < ::std::u32::MAX as u128 {
-                                return format!("{} (0x{:08X})", <f32>::from_bits(bytes as u32), bytes as u32);
+                            if bits < ::std::u32::MAX as u128 {
+                                return format!("{} (0x{:08X})", <f32>::from_bits(bits as u32), bits as u32);
                             }
                         }
                         F64 => {
-                            if bytes < ::std::u64::MAX as u128 {
-                                return format!("{} (0x{:08X})", <f64>::from_bits(bytes as u64), bytes as u64);
+                            if bits < ::std::u64::MAX as u128 {
+                                return format!("{} (0x{:08X})", <f64>::from_bits(bits as u64), bits as u64);
                             }
                         }
                     }
                 }
                 _ => {},
             }
-            bytes.to_string()
+            bits.to_string()
         },
     }
 }
@@ -145,17 +143,17 @@ pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>
             let (alloc, txt, _len) = print_ptr(ecx, ptr)?;
             return Ok((alloc, txt));
         },
-        Value::ByVal(primval) => print_primval(Some(ty), primval),
-        Value::ByValPair(val, extra) => {
+        Value::Scalar(primval) => print_primval(Some(ty), primval),
+        Value::ScalarPair(val, extra) => {
             match ty.sty {
                 TypeVariants::TyRawPtr(TypeAndMut { ty: &TyS { sty: TypeVariants::TyStr, .. }, .. }) |
                 TypeVariants::TyRef(_, &TyS { sty: TypeVariants::TyStr, .. }, _) => {
-                    if let (PrimVal::Ptr(ptr), PrimVal::Bytes(extra)) = (val, extra) {
+                    if let (Scalar::Ptr(ptr), Scalar::Bits { bits, .. }) = (val, extra) {
                         if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
                             if (ptr.offset.bytes() as u128) < allocation.bytes.len() as u128 {
                                 let bytes = &allocation.bytes[ptr.offset.bytes() as usize..];
                                 let s = String::from_utf8_lossy(bytes);
-                                return Ok((None, format!("\"{}\" ({}, {})", s, print_primval(None, val), extra)));
+                                return Ok((None, format!("\"{}\" ({}, {})", s, print_primval(None, val), bits)));
                             }
                         }
                     }
@@ -168,7 +166,7 @@ pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>
     Ok((None, txt))
 }
 
-pub fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String, u64), ()> {
+pub fn print_ptr(ecx: &EvalContext, ptr: Scalar) -> Result<(Option<u64>, String, u64), ()> {
     let ptr = ptr.to_ptr().map_err(|_| ())?;
     match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr)) {
         (Ok(alloc), Err(_)) => {
@@ -184,7 +182,7 @@ pub fn print_ptr(ecx: &EvalContext, ptr: Pointer) -> Result<(Option<u64>, String
     }
 }
 
-pub fn print_alloc(ptr_size: u64, ptr: MemoryPointer, alloc: &Allocation) -> String {
+pub fn print_alloc(ptr_size: u64, ptr: Pointer, alloc: &Allocation) -> String {
     use std::fmt::Write;
     let mut s = String::new();
     let mut i = 0;
