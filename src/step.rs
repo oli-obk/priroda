@@ -82,6 +82,8 @@ pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> String
         match pcx.ecx.step() {
             Ok(true) => {
                 *pcx.step_count += 1;
+                ::watch::step_callback(pcx);
+
                 if let Some(frame) = pcx.ecx.stack().last() {
                     let blck = &frame.mir.basic_blocks()[frame.block];
                     if frame.stmt != blck.statements.len() {
@@ -197,7 +199,7 @@ pub mod step_routes {
     }
 
     action_route!(restart: "/restart", |pcx| {
-        pcx.ecx = ::create_ecx(pcx.ecx.tcx.sess, pcx.ecx.tcx.tcx);
+        pcx.restart();
         "restarted".to_string()
     });
 
@@ -206,12 +208,12 @@ pub mod step_routes {
     });
 
     action_route!(single_back: "/single_back", |pcx| {
-        pcx.ecx = ::create_ecx(pcx.ecx.tcx.sess, pcx.ecx.tcx.tcx);
+        pcx.restart();
         if *pcx.step_count > 0 {
             *pcx.step_count -= 1;
             for _ in 0..*pcx.step_count {
                 match pcx.ecx.step() {
-                    Ok(true) => {}
+                    Ok(true) => ::watch::step_callback(pcx), // Rebuild traces till the current instruction
                     res => return format!("Miri is not deterministic causing error {:?}", res),
                 }
             }

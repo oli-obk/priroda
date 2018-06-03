@@ -1,4 +1,4 @@
-#![feature(rustc_private, custom_attribute, decl_macro, plugin, fnbox)]
+#![feature(rustc_private, custom_attribute, decl_macro, plugin, fnbox, catch_expr)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
 #![plugin(rocket_codegen)]
@@ -6,7 +6,9 @@
 extern crate rocket;
 extern crate getopts;
 extern crate miri;
+#[macro_use]
 extern crate rustc;
+extern crate rustc_mir;
 extern crate rustc_driver;
 extern crate rustc_data_structures;
 extern crate graphviz as dot;
@@ -28,6 +30,7 @@ extern crate lazy_static;
 
 mod render;
 mod step;
+mod watch;
 
 use std::boxed::FnBox;
 use std::path::PathBuf;
@@ -43,6 +46,7 @@ use rocket::fairing::AdHoc;
 use rocket::response::{Flash, Redirect};
 use rocket::response::content::*;
 use rocket::response::status::BadRequest;
+use rocket::http::ContentType;
 use promising_future::future_promise;
 
 use miri::{
@@ -68,6 +72,14 @@ pub struct PrirodaContext<'a, 'tcx: 'a> {
     bptree: BreakpointTree,
     step_count: &'a mut u128,
     auto_refresh: bool,
+    traces: watch::Traces<'tcx>,
+}
+
+impl<'a, 'tcx: 'a> PrirodaContext<'a, 'tcx> {
+    fn restart(&mut self) {
+        self.traces.clear(); // Cleanup all traces
+        self.ecx = ::create_ecx(self.ecx.tcx.tcx);
+    }
 }
 
 type RResult<T> = Result<T, Html<String>>;
@@ -89,10 +101,11 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
             let mut step_count = step_count.lock().unwrap_or_else(|err|err.into_inner());
 
             let mut pcx = PrirodaContext{
-                ecx: create_ecx(state.session, state.tcx.unwrap()),
+                ecx: create_ecx(state.tcx.unwrap()),
                 bptree: step::load_breakpoints_from_file(),
                 step_count: &mut *step_count,
                 auto_refresh: true,
+                traces: watch::Traces::new(),
             };
 
             // Step to the position where miri crashed if it crashed
@@ -116,8 +129,8 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
     }
 }
 
-fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
-    let (node_id, span, _) = session.entry_fn.borrow().expect("no main or start function found");
+fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
+    let (node_id, span, _) = tcx.sess.entry_fn.borrow().expect("no main or start function found");
     let main_id = tcx.hir.local_def_id(node_id);
 
     let main_instance = ty::Instance::mono(tcx, main_id);
@@ -193,27 +206,31 @@ fn favicon() -> rocket::response::Content<Vec<u8>> {
 
 #[cfg(not(feature="static_resources"))]
 #[get("/resources/<path..>")]
-fn resources(path: PathBuf) -> Result<Result<Css<String>, JavaScript<String>>, std::io::Error> {
+fn resources(path: PathBuf) -> Result<Content<String>, std::io::Error> {
     use std::io::{Error, ErrorKind};
     let mut res_path = PathBuf::from("./resources/");
     res_path.push(path);
     let content = ::std::fs::read_to_string(&res_path)?;
-    match res_path.extension().and_then(|ext|ext.to_str()) {
-        Some("css") => Ok(Ok(Css(content))),
-        Some("js") => Ok(Err(JavaScript(content))),
-        _ => Err(Error::new(ErrorKind::InvalidInput, "Invalid extension")),
-    }
+    Ok(Content(
+        match res_path.extension().and_then(|ext|ext.to_str()) {
+            Some("css") => ContentType::CSS,
+            Some("js") => ContentType::JavaScript,
+            Some("svg") => ContentType::SVG,
+            _ => Err(Error::new(ErrorKind::InvalidInput, "Invalid extension"))?,
+        },
+        content
+    ))
 }
 
 #[cfg(feature="static_resources")]
 #[get("/resources/<path..>")]
-fn resources(path: PathBuf) -> Result<Result<Css<&'static str>, JavaScript<&'static str>>, std::io::Error> {
+fn resources(path: PathBuf) -> Result<Content<&'static str>, std::io::Error> {
     use std::io::{Error, ErrorKind};
     match path.as_os_str().to_str() {
-        Some("svg-pan-zoom.js") => Ok(Err(JavaScript(include_str!("../resources/svg-pan-zoom.js")))),
-        Some("zoom_mir.js") => Ok(Err(JavaScript(include_str!("../resources/zoom_mir.js")))),
-        Some("style.css") => Ok(Ok(Css(include_str!("../resources/style.css")))),
-        Some("positioning.css") => Ok(Ok(Css(include_str!("../resources/positioning.css")))),
+        Some("svg-pan-zoom.js") => Ok(Content(ContentType::JavaScript, include_str!("../resources/svg-pan-zoom.js"))),
+        Some("zoom_mir.js") => Ok(Content(ContentType::JavaScript, include_str!("../resources/zoom_mir.js"))),
+        Some("style.css") => Ok(Content(ContentType::CSS, include_str!("../resources/style.css"))),
+        Some("positioning.css") => Ok(Content(ContentType::CSS, include_str!("../resources/positioning.css"))),
         _ => Err(Error::new(ErrorKind::InvalidInput, "Unknown resource")),
     }
 }
@@ -238,6 +255,7 @@ fn server(sender: PrirodaSender) {
         .mount("/", render::routes::routes())
         .mount("breakpoints", step::bp_routes::routes())
         .mount("step", step::step_routes::routes())
+        .mount("watch", watch::routes())
         .attach(AdHoc::on_launch(|rocket| {
             let config = rocket.config();
             if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {
