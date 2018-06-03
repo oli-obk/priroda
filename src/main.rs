@@ -31,11 +31,18 @@ mod step;
 
 use std::boxed::FnBox;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use rustc::session::Session;
+use rustc::ty::{self, TyCtxt, ParamEnv};
+use rustc::mir;
+use rustc_driver::{driver, CompilerCalls};
+
 use rocket::State;
 use rocket::fairing::AdHoc;
 use rocket::response::{Flash, Redirect};
 use rocket::response::content::*;
-use rocket::response::status::*;
+use rocket::response::status::BadRequest;
 use promising_future::future_promise;
 
 use miri::{
@@ -43,14 +50,8 @@ use miri::{
     AllocId,
     Place,
 };
+
 use step::BreakpointTree;
-
-use rustc::session::Session;
-use rustc::ty::{self, TyCtxt, ParamEnv};
-use rustc::mir;
-use rustc_driver::{driver, CompilerCalls};
-
-use std::sync::{Arc, Mutex};
 
 fn should_hide_stmt(stmt: &mir::Statement) -> bool {
     use rustc::mir::StatementKind::*;
@@ -62,26 +63,11 @@ fn should_hide_stmt(stmt: &mir::Statement) -> bool {
 
 type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, 'tcx, miri::Evaluator<'tcx>>;
 
-type PrirodaSender = Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>;
-
 pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: EvalContext<'a, 'tcx>,
     bptree: BreakpointTree,
     step_count: &'a mut u128,
-}
-
-impl<'a, 'tcx: 'a> std::ops::Deref for PrirodaContext<'a, 'tcx> {
-    type Target = EvalContext<'a, 'tcx>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.ecx
-    }
-}
-
-impl<'a, 'tcx: 'a> std::ops::DerefMut for PrirodaContext<'a, 'tcx> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.ecx
-    }
+    auto_refresh: bool,
 }
 
 type RResult<T> = Result<T, Html<String>>;
@@ -106,6 +92,7 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
                 ecx: create_ecx(state.session, state.tcx.unwrap()),
                 bptree: step::load_breakpoints_from_file(),
                 step_count: &mut *step_count,
+                auto_refresh: true,
             };
 
             // Step to the position where miri crashed if it crashed
@@ -140,7 +127,7 @@ fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> E
 
     let return_type = main_mir.return_ty();
     let return_layout = tcx.layout_of(ParamEnv::reveal_all().and(return_type)).expect("couldnt get layout for return pointer");
-    let return_ptr = ecx.memory.allocate(return_layout.size.bytes(), return_layout.align, None).unwrap();
+    let return_ptr = ecx.memory.allocate(return_layout.size, return_layout.align, None).unwrap();
     ecx.push_stack_frame(
         main_instance,
         span,
@@ -151,41 +138,103 @@ fn create_ecx<'a, 'tcx: 'a>(session: &Session, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> E
     ecx
 }
 
-macro do_work($sender:expr, |$pcx:ident| $body:block) {{
-    let (future, promise) = future_promise();
-    let sender = $sender.lock().unwrap_or_else(|err|err.into_inner());
-    match sender.send(Box::new(move |$pcx: &mut PrirodaContext| {
-        promise.set({$body});
-    })) {
-        Ok(()) => match future.value() {
-            Some(val) => Ok(val),
-            None => Err(Html("<center><h1>Miri crashed please go to <a href='/'>index</a></h1></center>".to_string()))
-        },
-        Err(_) => {
-            Err(Html("<center><h1>Miri crashed too often. Please restart priroda.</h1></center>".to_string()))
+pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>);
+
+impl PrirodaSender {
+    fn do_work<'r, T, F>(&self, f: F) -> Result<T, Html<String>>
+        where T: rocket::response::Responder<'r> + Send + 'static,
+              F: FnOnce(&mut PrirodaContext) -> T + Send + 'static {
+        let (future, promise) = future_promise();
+        let sender = self.0.lock().unwrap_or_else(|err|err.into_inner());
+        match sender.send(Box::new(move |pcx: &mut PrirodaContext| {
+            promise.set(f(pcx));
+        })) {
+            Ok(()) => match future.value() {
+                Some(val) => Ok(val),
+                None => Err(Html("<center><h1>Miri crashed please go to <a href='/'>index</a></h1></center>".to_string()))
+            },
+            Err(_) => {
+                Err(Html("<center><h1>Miri crashed too often. Please restart priroda.</h1></center>".to_string()))
+            }
         }
     }
-}}
 
-macro do_work_and_redirect($sender:expr, |$pcx:ident| $body:block) {
-    do_work!($sender, |$pcx| {
-        Flash::success(Redirect::to("/"), {$body})
-    })
+    fn do_work_and_redirect<'r, F>(&self, f: F) -> Result<Flash<Redirect>, Html<String>>
+        where F: FnOnce(&mut PrirodaContext) -> String + Send + 'static {
+        self.do_work(move |pcx| {
+            Flash::success(Redirect::to("/"), f(pcx))
+        })
+    }
+}
+
+macro action_route($name:ident: $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
+    use rocket::State;
+    use rocket::response::{Flash, Redirect};
+    #[get($route)]
+    pub fn $name(sender: State<::PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Flash<Redirect>> {
+        sender.do_work_and_redirect(move |$pcx| {
+            (||$body)()
+        })
+    }
 }
 
 #[get("/please_panic")]
 #[allow(unreachable_code)]
 fn please_panic(sender: State<PrirodaSender>) -> RResult<()> {
-    do_work!(sender, |_pcx| {
+    sender.do_work(|_pcx| {
         panic!("You requested a panic");
     })
 }
+
+#[get("/favicon.ico")]
+fn favicon() -> rocket::response::Content<Vec<u8>> {
+    Content(rocket::http::ContentType::BMP, ::std::fs::read("./resources/favicon.ico").unwrap())
+}
+
+#[cfg(not(feature="static_resources"))]
+#[get("/resources/<path..>")]
+fn resources(path: PathBuf) -> Result<Result<Css<String>, JavaScript<String>>, std::io::Error> {
+    use std::io::{Error, ErrorKind};
+    let mut res_path = PathBuf::from("./resources/");
+    res_path.push(path);
+    let content = ::std::fs::read_to_string(&res_path)?;
+    match res_path.extension().and_then(|ext|ext.to_str()) {
+        Some("css") => Ok(Ok(Css(content))),
+        Some("js") => Ok(Err(JavaScript(content))),
+        _ => Err(Error::new(ErrorKind::InvalidInput, "Invalid extension")),
+    }
+}
+
+#[cfg(feature="static_resources")]
+#[get("/resources/<path..>")]
+fn resources(path: PathBuf) -> Result<Result<Css<&'static str>, JavaScript<&'static str>>, std::io::Error> {
+    use std::io::{Error, ErrorKind};
+    match path.as_os_str().to_str() {
+        Some("svg-pan-zoom.js") => Ok(Err(JavaScript(include_str!("../resources/svg-pan-zoom.js")))),
+        Some("zoom_mir.js") => Ok(Err(JavaScript(include_str!("../resources/zoom_mir.js")))),
+        Some("style.css") => Ok(Ok(Css(include_str!("../resources/style.css")))),
+        Some("positioning.css") => Ok(Ok(Css(include_str!("../resources/positioning.css")))),
+        _ => Err(Error::new(ErrorKind::InvalidInput, "Unknown resource")),
+    }
+}
+
+#[get("/step_count")]
+fn step_count(sender: State<PrirodaSender>) -> RResult<String> {
+    sender.do_work(|pcx| {
+        format!("{}", pcx.step_count)
+    })
+}
+
+action_route!(disable_auto_refresh: "/disable_auto_refresh", |pcx| {
+        pcx.auto_refresh = false;
+        "auto refresh disabled".to_string()
+    });
 
 fn server(sender: PrirodaSender) {
     use rocket::config::Value;
     rocket::ignite()
         .manage(sender)
-        .mount("/", routes![please_panic])
+        .mount("/", routes![please_panic, favicon, resources, step_count, disable_auto_refresh])
         .mount("/", render::routes::routes())
         .mount("breakpoints", step::bp_routes::routes())
         .mount("step", step::step_routes::routes())
@@ -234,7 +283,7 @@ fn main() {
 
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
-    let sender: PrirodaSender = Mutex::new(sender);
+    let sender = PrirodaSender(Mutex::new(sender));
     let step_count = Arc::new(Mutex::new(0));
 
     let handle = std::thread::spawn(move || {

@@ -2,10 +2,11 @@ mod graphviz;
 mod locals;
 mod source;
 
+use rustc::hir::map::definitions::DefPathData;
+use rustc::ty::layout::Size;
+
 use rocket::response::content::Html;
-use horrorshow::Template;
-use PrirodaContext;
-use step::Breakpoint;
+use horrorshow::{Raw, Template};
 
 use miri::{
     Frame,
@@ -13,44 +14,57 @@ use miri::{
     AllocId,
 };
 
-use rustc::hir::map::definitions::DefPathData;
+use PrirodaContext;
+use step::Breakpoint;
 
-use std::cell::Cell;
-
-thread_local! {
-    static FLASH_MESSAGE: Cell<String> = Cell::new(String::new());
-}
-
-pub fn set_flash_message(msg: String) {
-    FLASH_MESSAGE.with(|key| key.set(msg));
+pub fn refresh_script(pcx: &PrirodaContext) -> String {
+    if pcx.auto_refresh {
+        r#"<script>
+            setInterval(() => {
+                fetch("/step_count").then((res) => {
+                    if(res.status == 200) {
+                        return res.text();
+                    } else {
+                        throw "";
+                    }
+                }).then((res) => {
+                    if(res != #step_count#) {
+                        window.location.reload();
+                    }
+                }).catch(()=>{});
+            }, 1000);
+        </script>"#.replace("#step_count#", &format!("{}", pcx.step_count))
+    } else {
+        String::new()
+    }
 }
 
 pub fn render_main_window(
     pcx: &PrirodaContext,
     display_frame: Option<usize>,
+    message: String,
 ) -> Html<String> {
-    let message = FLASH_MESSAGE.with(|key| key.replace(String::new()));
     let is_active_stack_frame = match display_frame {
-        Some(n) => n == pcx.stack().len() - 1,
+        Some(n) => n == pcx.ecx.stack().len() - 1,
         None => true,
     };
-    let frame = display_frame.and_then(|frame| pcx.stack().get(frame)).or_else(|| pcx.stack().last());
-    let filename = pcx.tcx.sess.local_crate_source_file.clone().unwrap_or_else(|| "no file name".to_string().into());
-    let stack: Vec<(String, String, String)> = pcx.stack().iter().map(|&Frame { instance, span, .. } | {
+    let frame = display_frame.and_then(|frame| pcx.ecx.stack().get(frame)).or_else(|| pcx.ecx.stack().last());
+    let filename = pcx.ecx.tcx.sess.local_crate_source_file.clone().unwrap_or_else(|| "no file name".to_string().into());
+    let stack: Vec<(String, String, String)> = pcx.ecx.stack().iter().map(|&Frame { instance, span, .. } | {
         (
-            if pcx.tcx.def_key(instance.def_id()).disambiguated_data.data == DefPathData::ClosureExpr {
+            if pcx.ecx.tcx.def_key(instance.def_id()).disambiguated_data.data == DefPathData::ClosureExpr {
                 "inside call to closure".to_string()
             } else {
                 instance.to_string()
             },
-            pcx.tcx.sess.codemap().span_to_string(span),
+            pcx.ecx.tcx.sess.codemap().span_to_string(span),
             format!("{:?}", instance.def_id()),
         )
     }).collect();
     let rendered_breakpoints: Vec<String> = pcx.bptree.iter().map(|&Breakpoint(def_id, bb, stmt)| format!("{:?}@{}:{}", def_id, bb.index(), stmt)).collect();
     use rustc_data_structures::indexed_vec::Idx;
-    let rendered_locals = locals::render_locals(pcx, frame);
-    let rendered_source = source::render_source(pcx.tcx.tcx, frame);
+    let rendered_locals = locals::render_locals(&pcx.ecx, frame);
+    let rendered_source = source::render_source(pcx.ecx.tcx.tcx, frame);
 
     let mir_graph = frame.map(|frame| {
         graphviz::render_html(frame, pcx.bptree.for_def_id(frame.instance.def_id()))
@@ -64,12 +78,13 @@ pub fn render_main_window(
             head {
                 title { : filename.to_str().unwrap() }
                 meta(charset = "UTF-8") {}
-                script(type="text/javascript") { : Raw(include_str!("../../svg-pan-zoom.js")) }
-                script(type="text/javascript") { : Raw(include_str!("../../zoom_mir.js")) }
+                script(src="/resources/svg-pan-zoom.js") {}
+                script(src="/resources/zoom_mir.js") {}
+                : Raw(refresh_script(pcx))
             }
             body(onload="enable_mir_mousewheel()") {
-                style { : Raw(include_str!("../../style.css")) }
-                style { : Raw(include_str!("../../positioning.css")) }
+                link(rel="stylesheet", href="/resources/style.css");
+                link(rel="stylesheet", href="/resources/positioning.css");
                 div(id="left") {
                     div(id="commands") {
                         @ if is_active_stack_frame {
@@ -137,11 +152,10 @@ pub fn render_reverse_ptr<ERR: ::std::fmt::Debug>(
     let mut buf = String::new();
     match alloc_id {
         Some(Err(e)) => {
-            set_flash_message(format!("not a number: {:?}", e));
-            render_main_window(pcx, None)
+            render_main_window(pcx, None, format!("not a number: {:?}", e))
         },
         Some(Ok(alloc_id)) => {
-            let allocs: Vec<_> = pcx.memory().allocations().filter_map(|(id, alloc)| {
+            let allocs: Vec<_> = pcx.ecx.memory().allocations().filter_map(|(id, alloc)| {
                 alloc.relocations
                         .values()
                         .find(|reloc| reloc.0 == alloc_id)
@@ -151,6 +165,7 @@ pub fn render_reverse_ptr<ERR: ::std::fmt::Debug>(
                 head {
                     title { : format!("Allocations with pointers to Allocation {}", alloc_id) }
                     meta(charset = "UTF-8") {}
+                    : Raw(refresh_script(pcx))
                 }
                 body {
                     @for id in allocs {
@@ -162,8 +177,7 @@ pub fn render_reverse_ptr<ERR: ::std::fmt::Debug>(
             Html(buf)
         },
         None => {
-            set_flash_message("no allocation selected".to_string());
-            render_main_window(pcx, None)
+            render_main_window(pcx, None, "no allocation selected".to_string())
         }
     }
 }
@@ -178,15 +192,14 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
     match (alloc_id, offset) {
         (Some(Err(e)), _) |
         (_, Some(Err(e))) => {
-            set_flash_message(format!("not a number: {:?}", e));
-            render_main_window(pcx, None)
+            render_main_window(pcx, None, format!("not a number: {:?}", e))
         }
         (Some(Ok(alloc_id)), offset) => {
             let offset = offset.unwrap_or(Ok(0)).expect("already checked in previous arm");
             let (mem, offset, rest) =
                 if let Ok((_, mem, bytes)) = locals::print_ptr(&pcx.ecx, MemoryPointer {
                     alloc_id,
-                    offset,
+                    offset: Size::from_bytes(offset),
             }.into()) {
                 if bytes * 2 > offset {
                     (mem, offset, (bytes * 2 - offset - 1) as usize)
@@ -200,6 +213,7 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
                 head {
                     title { : format!("Allocation {}", alloc_id) }
                     meta(charset = "UTF-8") {}
+                    : Raw(refresh_script(pcx))
                 }
                 body {
                     span(style="font-family: monospace") {
@@ -214,8 +228,7 @@ pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
             Html(buf)
         },
         (None, _) => {
-            set_flash_message("no allocation selected".to_string());
-            render_main_window(pcx, None)
+            render_main_window(pcx, None, "no allocation selected".to_string())
         }
     }
 }
@@ -234,18 +247,17 @@ pub mod routes {
 
     #[get("/")]
     fn index(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-        do_work!(sender, |pcx| {
-            if let Some(flash) = flash {
-                render::set_flash_message(flash.msg().to_string());
-            }
-            render::render_main_window(pcx, None)
+        sender.do_work(|pcx| {
+            let flash = flash.map(|flash| flash.msg().to_string()).unwrap_or_else(String::new);
+            render::render_main_window(pcx, None, flash)
         })
     }
 
     #[get("/frame/<frame>")]
-    fn frame(sender: State<PrirodaSender>, frame: usize) -> RResult<Html<String>> {
-        do_work!(sender, |pcx| {
-            render::render_main_window(pcx, Some(frame))
+    fn frame(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSender>, frame: usize) -> RResult<Html<String>> {
+        sender.do_work(move |pcx| {
+            let flash = flash.map(|flash| flash.msg().to_string()).unwrap_or_else(String::new);
+            render::render_main_window(pcx, Some(frame), flash)
         })
     }
 
@@ -256,7 +268,7 @@ pub mod routes {
 
     #[get("/ptr/<path..>")]
     fn ptr(path: PathBuf, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-        do_work!(sender, |pcx| {
+        sender.do_work(move |pcx| {
             let path = path.to_string_lossy();
             let mut matches = path.split('/');
             render::render_ptr_memory(pcx, matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse))
@@ -265,7 +277,7 @@ pub mod routes {
 
     #[get("/reverse_ptr/<ptr>")]
     fn reverse_ptr(ptr: String, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-        do_work!(sender, |pcx| {
+        sender.do_work(move |pcx| {
             render::render_reverse_ptr(pcx, Some(ptr.parse()))
         })
     }
