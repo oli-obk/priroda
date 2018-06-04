@@ -162,11 +162,9 @@ fn print_stack_traces<'a, 'tcx: 'a>(ecx: &EvalContext<'a, 'tcx>, mut buf: impl W
     let name_for_instance = |i: Instance| {
         ecx.tcx.absolute_item_path_str(i.def_id()).replace("<", "&lt;").replace(">", "&gt;")
     };
-    let mut last_stack_trace = &[] as &[_];
     writeln!(buf, "<h1>Stack trace</h1>\n<ul>\n")?;
     for (stack_trace, count) in traces {
         writeln!(buf, "<li>{2}{0} ({1})</li>\n", name_for_instance(stack_trace.last().unwrap().0), count, format!("{nil: <indent$}", nil = "", indent = 4 * (stack_trace.len() - 1)).replace(" ", "&nbsp;"))?;
-        last_stack_trace = stack_trace;
     }
     writeln!(buf, "</ul>")?;
     Ok(())

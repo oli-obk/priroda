@@ -64,18 +64,6 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
     {
         let ecx = &mut pcx.ecx;
         let traces = &mut pcx.traces;
-        let step_count = *pcx.step_count;
-
-        // Remove all interned statics
-        traces.alloc_traces.retain(|alloc_id, alloc_trace| {
-            /*if ecx.tcx.tcx.interpret_interner.get_alloc(*alloc_id).is_none() {
-                true
-            } else {
-                assert!(alloc_trace.trace_points.len() == 0, "at {} {}: {:#?}", step_count, alloc_id, alloc_trace);
-                false
-            }*/
-            true
-        });
 
         // Collect alloc traces
         for (alloc_id, alloc_trace) in traces.alloc_traces.iter_mut() {
