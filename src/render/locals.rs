@@ -91,48 +91,47 @@ pub fn render_locals<'a, 'tcx: 'a>(ecx: &EvalContext<'a, 'tcx>, frame: Option<&F
 
 pub fn print_primval(ty: Option<Ty>, val: Scalar) -> String {
     match val {
+        Scalar::Bits { defined: 0, .. } => "&lt;undef &gt;".to_string(),
         Scalar::Ptr(ptr) => format!("<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>", alloc = ptr.alloc_id.0, offset = ptr.offset.bytes()),
         Scalar::Bits { bits, .. } => {
             match ty {
                 Some(&TyS { sty: TypeVariants::TyBool, ..}) => {
                     if bits == 0 {
-                        return "false (0)".to_string()
+                        "false (0)".to_string()
                     } else if bits == 1 {
-                        return "true (1)".to_string()
+                        "true (1)".to_string()
+                    } else {
+                        bits.to_string()
                     }
                 }
-                Some(&TyS { sty: TypeVariants::TyChar, ..}) => {
-                    if bits < ::std::u32::MAX as u128 {
-                        let chr = ::std::char::from_u32(bits as u32).unwrap();
-                        if chr.is_ascii() {
-                            return format!("'{}' (0x{:08X})", chr, bits);
-                        }
+                Some(&TyS { sty: TypeVariants::TyChar, ..}) if bits < ::std::u32::MAX as u128 => {
+                    let chr = ::std::char::from_u32(bits as u32).unwrap();
+                    if chr.is_ascii() {
+                        format!("'{}' (0x{:08X})", chr, bits)
+                    } else {
+                        bits.to_string()
                     }
                 }
                 Some(&TyS { sty: TypeVariants::TyUint(_), ..}) => {
-                    return format!("{0} (0x{0:08X})", bits);
+                    format!("{0} (0x{0:08X})", bits)
                 }
                 Some(&TyS { sty: TypeVariants::TyInt(_), ..}) => {
-                    return format!("{0} (0x{0:08X})", bits as i128);
+                    format!("{0} (0x{0:08X})", bits as i128)
                 }
                 Some(&TyS { sty: TypeVariants::TyFloat(float_ty), ..}) => {
                     use syntax::ast::FloatTy::*;
                     match float_ty {
-                        F32 => {
-                            if bits < ::std::u32::MAX as u128 {
-                                return format!("{} (0x{:08X})", <f32>::from_bits(bits as u32), bits as u32);
-                            }
+                        F32 if bits < ::std::u32::MAX as u128 => {
+                            format!("{} (0x{:08X})", <f32>::from_bits(bits as u32), bits as u32)
                         }
-                        F64 => {
-                            if bits < ::std::u64::MAX as u128 {
-                                return format!("{} (0x{:08X})", <f64>::from_bits(bits as u64), bits as u64);
-                            }
+                        F64 if bits < ::std::u64::MAX as u128 => {
+                            format!("{} (0x{:08X})", <f64>::from_bits(bits as u64), bits as u64)
                         }
+                        _ => bits.to_string(),
                     }
                 }
-                _ => {},
+                _ => bits.to_string(),
             }
-            bits.to_string()
         },
     }
 }
@@ -148,12 +147,12 @@ pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>
             match ty.sty {
                 TypeVariants::TyRawPtr(TypeAndMut { ty: &TyS { sty: TypeVariants::TyStr, .. }, .. }) |
                 TypeVariants::TyRef(_, &TyS { sty: TypeVariants::TyStr, .. }, _) => {
-                    if let (Scalar::Ptr(ptr), Scalar::Bits { bits, .. }) = (val, extra) {
+                    if let (Scalar::Ptr(ptr), Scalar::Bits { bits: len, .. }) = (val, extra) {
                         if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
                             if (ptr.offset.bytes() as u128) < allocation.bytes.len() as u128 {
-                                let bytes = &allocation.bytes[ptr.offset.bytes() as usize..];
-                                let s = String::from_utf8_lossy(bytes);
-                                return Ok((None, format!("\"{}\" ({}, {})", s, print_primval(None, val), bits)));
+                                let alloc_bytes = &allocation.bytes[ptr.offset.bytes() as usize..];
+                                let s = String::from_utf8_lossy(alloc_bytes);
+                                return Ok((None, format!("\"{}\" ({}, {})", s, print_primval(None, val), len)));
                             }
                         }
                     }
