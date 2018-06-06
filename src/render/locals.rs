@@ -112,7 +112,9 @@ fn print_primval(val: Scalar) -> String {
             alloc = ptr.alloc_id.0,
             offset = ptr.offset.bytes()
         ),
-        Scalar::Bits { bits, .. } => bits.to_string(),
+        Scalar::Bits { bits, defined } => {
+            format!("{:0width$X}", bits, width = (defined as usize) / 8)
+        }
     }
 }
 
@@ -123,43 +125,40 @@ pub fn print_value<'a, 'tcx: 'a>(
 ) -> Result<(Option<u64>, String), ()> {
     let layout = ecx.layout_of(ty).unwrap();
     let pretty: EvalResult<String> = do catch {
-        if let Value::ScalarPair(val, extra) = val {
-            match ty.sty {
-                TypeVariants::TyRawPtr(TypeAndMut {
-                    ty:
-                        &TyS {
-                            sty: TypeVariants::TyStr,
-                            ..
-                        },
-                    ..
-                })
-                | TypeVariants::TyRef(
-                    _,
+        match ty.sty {
+            TypeVariants::TyRawPtr(TypeAndMut {
+                ty:
                     &TyS {
                         sty: TypeVariants::TyStr,
                         ..
                     },
-                    _,
-                ) => {
-                    if let (Scalar::Ptr(ptr), Scalar::Bits { bits: len, .. }) = (val, extra) {
-                        if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
-                            let offset = ptr.offset.bytes();
-                            if (offset as u128) < allocation.bytes.len() as u128 {
-                                let alloc_bytes = &allocation.bytes[offset as usize
-                                                                        ..(offset as usize)
-                                                                            .checked_add(
-                                        len as usize,
-                                    ).ok_or(
-                                        EvalErrorKind::AssumptionNotHeld,
-                                    )?];
-                                let s = String::from_utf8_lossy(alloc_bytes);
-                                (Ok(format!("\"{}\"", s)) as EvalResult<String>)?;
-                            }
+                ..
+            })
+            | TypeVariants::TyRef(
+                _,
+                &TyS {
+                    sty: TypeVariants::TyStr,
+                    ..
+                },
+                _,
+            ) => {
+                if let Value::ScalarPair(Scalar::Ptr(ptr), Scalar::Bits { bits: len, .. }) = val {
+                    if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
+                        let offset = ptr.offset.bytes();
+                        if (offset as u128) < allocation.bytes.len() as u128 {
+                            let alloc_bytes = &allocation.bytes[offset as usize
+                                                                    ..(offset as usize)
+                                                                        .checked_add(len as usize)
+                                                                        .ok_or(
+                                    EvalErrorKind::AssumptionNotHeld,
+                                )?];
+                            let s = String::from_utf8_lossy(alloc_bytes);
+                            (Ok(format!("\"{}\"", s)) as EvalResult<String>)?;
                         }
                     }
                 }
-                _ => {}
             }
+            _ => {}
         }
         if layout.size.bytes() == 0 {
             Err(EvalErrorKind::AssumptionNotHeld)?;
@@ -174,9 +173,9 @@ pub fn print_value<'a, 'tcx: 'a>(
         match ty.sty {
             TypeVariants::TyBool => {
                 if bits == 0 {
-                    "false (0)".to_string()
+                    "false".to_string()
                 } else if bits == 1 {
-                    "true (1)".to_string()
+                    "true".to_string()
                 } else {
                     Err(EvalErrorKind::AssumptionNotHeld)?
                 }
@@ -184,21 +183,21 @@ pub fn print_value<'a, 'tcx: 'a>(
             TypeVariants::TyChar if bits < ::std::u32::MAX as u128 => {
                 let chr = ::std::char::from_u32(bits as u32).unwrap();
                 if chr.is_ascii() {
-                    format!("'{}' (0x{:08X})", chr, bits)
+                    format!("'{}'", chr)
                 } else {
                     Err(EvalErrorKind::AssumptionNotHeld)?
                 }
             }
-            TypeVariants::TyUint(_) => format!("{0} (0x{0:08X})", bits),
-            TypeVariants::TyInt(_) => format!("{0} (0x{0:08X})", bits as i128),
+            TypeVariants::TyUint(_) => format!("{0}", bits),
+            TypeVariants::TyInt(_) => format!("{0}", bits as i128),
             TypeVariants::TyFloat(float_ty) => {
                 use syntax::ast::FloatTy::*;
                 match float_ty {
                     F32 if bits < ::std::u32::MAX as u128 => {
-                        format!("{} (0x{:08X})", <f32>::from_bits(bits as u32), bits as u32)
+                        format!("{}", <f32>::from_bits(bits as u32))
                     }
                     F64 if bits < ::std::u64::MAX as u128 => {
-                        format!("{} (0x{:08X})", <f64>::from_bits(bits as u64), bits as u64)
+                        format!("{}", <f64>::from_bits(bits as u64))
                     }
                     _ => Err(EvalErrorKind::AssumptionNotHeld)?,
                 }
@@ -219,7 +218,7 @@ pub fn print_value<'a, 'tcx: 'a>(
         ),
     };
     let txt = if let Ok(pretty) = pretty {
-        format!("{} {}", pretty, txt)
+        format!("{} (0x{})", pretty, txt)
     } else {
         txt
     };
