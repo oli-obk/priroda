@@ -123,7 +123,9 @@ fn pp_value<'a, 'tcx: 'a>(
     ty: Ty<'tcx>,
     val: Value,
 ) -> EvalResult<'tcx, String> {
-    let layout = ecx.layout_of(ty).unwrap();
+    let layout = ecx.layout_of(ty).map_err(|_| {
+        EvalErrorKind::AssumptionNotHeld // Don't pretty print dst's
+    })?;
     match ty.sty {
         TypeVariants::TyRawPtr(TypeAndMut {
             ty: &TyS {
@@ -150,13 +152,48 @@ fn pp_value<'a, 'tcx: 'a>(
                                                       .checked_add(len as usize)
                                                       .ok_or(EvalErrorKind::AssumptionNotHeld)?];
                         let s = String::from_utf8_lossy(alloc_bytes);
-                        (Ok(format!("\"{}\"", s)) as EvalResult<String>)?;
+                        return Ok(format!("\"{}\"", s));
                     }
                 }
             }
         }
+        TypeVariants::TyAdt(adt_def, substs) => {
+            if let Value::Scalar(Scalar::Bits { defined: 0, .. }) = val {
+                Err(EvalErrorKind::AssumptionNotHeld)?;
+            }
+            println!("{:?} {:?} {:?}", val, ty, adt_def.variants);
+            if adt_def.variants.len() == 1 {
+                let mut pretty = format!(
+                    "{:?} {{ ",
+                    ecx.tcx
+                        .absolute_item_path_str(adt_def.did)
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                );
+                let ty_layout = ecx.layout_of(ty)?;
+                for (i, adt_field) in adt_def.variants[0].fields.iter().enumerate() {
+                    let field_pretty: EvalResult<String> = do catch {
+                        let (field_val, field_layout) =
+                            ecx.read_field(val, None, ::rustc::mir::Field::new(i), ty_layout)?;
+                        let pp_field = print_value(ecx, field_layout.ty, field_val)
+                            .map_err(|_| EvalErrorKind::AssumptionNotHeld)?
+                            .1;
+                        format!("{}: {}, ", adt_field.ident.as_str(), pp_field)
+                    };
+                    if let Ok(field_pretty) = field_pretty {
+                        pretty.push_str(&field_pretty);
+                    } else {
+                        pretty.push_str("<err>");
+                    }
+                }
+                pretty.push_str("}");
+                println!("pretty adt: {}", pretty);
+                return Ok(pretty);
+            }
+        }
         _ => {}
     }
+
     if layout.size.bytes() == 0 {
         Err(EvalErrorKind::AssumptionNotHeld)?;
     }
@@ -212,7 +249,7 @@ pub fn print_value<'a, 'tcx: 'a>(
 
     let (alloc, txt) = match val {
         Value::ByRef(ptr, _align) => {
-            let (alloc, txt, _len) = print_ptr(ecx, ptr)?;
+            let (alloc, txt, _len) = print_ptr(ecx, ptr, Some(ty))?;
             (alloc, txt)
         }
         Value::Scalar(primval) => (None, print_primval(primval)),
@@ -229,11 +266,15 @@ pub fn print_value<'a, 'tcx: 'a>(
     Ok((alloc, txt))
 }
 
-pub fn print_ptr(ecx: &EvalContext, ptr: Scalar) -> Result<(Option<u64>, String, u64), ()> {
+pub fn print_ptr<'a, 'tcx: 'a>(
+    ecx: &EvalContext<'a, 'tcx>,
+    ptr: Scalar,
+    ty: Option<Ty<'tcx>>,
+) -> Result<(Option<u64>, String, u64), ()> {
     let ptr = ptr.to_ptr().map_err(|_| ())?;
     match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr)) {
         (Ok(alloc), Err(_)) => {
-            let s = print_alloc(ecx.memory().pointer_size().bytes(), ptr, alloc);
+            let s = print_alloc(&ecx, ecx.memory().pointer_size().bytes(), ptr, alloc, ty);
             Ok((Some(ptr.alloc_id.0), s, alloc.bytes.len() as u64))
         }
         (Err(_), Ok(_)) => {
@@ -245,11 +286,22 @@ pub fn print_ptr(ecx: &EvalContext, ptr: Scalar) -> Result<(Option<u64>, String,
     }
 }
 
-pub fn print_alloc(ptr_size: u64, ptr: Pointer, alloc: &Allocation) -> String {
+pub fn print_alloc<'a, 'tcx: 'a>(
+    ecx: &EvalContext<'a, 'tcx>,
+    ptr_size: u64,
+    ptr: Pointer,
+    alloc: &Allocation,
+    ty: Option<Ty<'tcx>>,
+) -> String {
     use std::fmt::Write;
+    let end: Option<u64> = do catch {
+        let l = ecx.layout_of(ty?).ok()?;
+        l.size.bytes() + ptr.offset.bytes()
+    };
+    let end = end.unwrap_or(alloc.bytes.len() as u64);
     let mut s = String::new();
-    let mut i = 0;
-    while i < alloc.bytes.len() as u64 {
+    let mut i = ptr.offset.bytes();
+    while i < end {
         if let Some(&reloc) = alloc.relocations.get(&Size::from_bytes(i)) {
             i += ptr_size;
             write!(&mut s,
