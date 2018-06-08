@@ -161,7 +161,7 @@ fn pp_value<'a, 'tcx: 'a>(
             if let Value::Scalar(Scalar::Bits { defined: 0, .. }) = val {
                 Err(EvalErrorKind::AssumptionNotHeld)?;
             }
-            println!("{:?} {:?} {:?}", val, ty, adt_def.variants);
+            //println!("{:?} {:?} {:?}", val, ty, adt_def.variants);
             if adt_def.variants.len() == 1 {
                 let mut pretty = format!(
                     "{} {{ ",
@@ -250,7 +250,8 @@ pub fn print_value<'a, 'tcx: 'a>(
 
     let (alloc, txt) = match val {
         Value::ByRef(ptr, _align) => {
-            let (alloc, txt, _len) = print_ptr(ecx, ptr, Some(ty))?;
+            let size: Option<u64> = ecx.layout_of(ty).ok().map(|l| l.size.bytes());
+            let (alloc, txt, _len) = print_ptr(ecx, ptr, size)?;
             (alloc, txt)
         }
         Value::Scalar(primval) => (None, print_primval(primval)),
@@ -267,15 +268,15 @@ pub fn print_value<'a, 'tcx: 'a>(
     Ok((alloc, txt))
 }
 
-pub fn print_ptr<'a, 'tcx: 'a>(
-    ecx: &EvalContext<'a, 'tcx>,
+pub fn print_ptr(
+    ecx: &EvalContext,
     ptr: Scalar,
-    ty: Option<Ty<'tcx>>,
+    size: Option<u64>,
 ) -> Result<(Option<u64>, String, u64), ()> {
     let ptr = ptr.to_ptr().map_err(|_| ())?;
     match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr)) {
         (Ok(alloc), Err(_)) => {
-            let s = print_alloc(&ecx, ecx.memory().pointer_size().bytes(), ptr, alloc, ty);
+            let s = print_alloc(ecx.memory().pointer_size().bytes(), ptr, alloc, size);
             Ok((Some(ptr.alloc_id.0), s, alloc.bytes.len() as u64))
         }
         (Err(_), Ok(_)) => {
@@ -287,19 +288,11 @@ pub fn print_ptr<'a, 'tcx: 'a>(
     }
 }
 
-pub fn print_alloc<'a, 'tcx: 'a>(
-    ecx: &EvalContext<'a, 'tcx>,
-    ptr_size: u64,
-    ptr: Pointer,
-    alloc: &Allocation,
-    ty: Option<Ty<'tcx>>,
-) -> String {
+pub fn print_alloc(ptr_size: u64, ptr: Pointer, alloc: &Allocation, size: Option<u64>) -> String {
     use std::fmt::Write;
-    let end: Option<u64> = do catch {
-        let l = ecx.layout_of(ty?).ok()?;
-        l.size.bytes() + ptr.offset.bytes()
-    };
-    let end = end.unwrap_or(alloc.bytes.len() as u64);
+    let end = size
+        .map(|s| s + ptr.offset.bytes())
+        .unwrap_or(alloc.bytes.len() as u64);
     let mut s = String::new();
     let mut i = ptr.offset.bytes();
     while i < end {

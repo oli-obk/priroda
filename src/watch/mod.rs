@@ -122,7 +122,6 @@ view_route!(show: "/show", |pcx| {
                 let content = match trace_point {
                     AllocTracePoint::Changed(alloc) => {
                         ::render::locals::print_alloc(
-                            &pcx.ecx,
                             pcx.ecx.memory().pointer_size().bytes(),
                             Pointer::new(*alloc_id, Size::from_bytes(0)).into(),
                             alloc,
