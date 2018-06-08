@@ -175,16 +175,16 @@ fn pp_value<'a, 'tcx: 'a>(
                     let field_pretty: EvalResult<String> = do catch {
                         let (field_val, field_layout) =
                             ecx.read_field(val, None, ::rustc::mir::Field::new(i), ty_layout)?;
-                        let pp_field = print_value(ecx, field_layout.ty, field_val)
-                            .map_err(|_| EvalErrorKind::AssumptionNotHeld)?
-                            .1;
-                        format!("{}: {}, ", adt_field.ident.as_str(), pp_field)
+                        pp_value(ecx, field_layout.ty, field_val)?
                     };
-                    if let Ok(field_pretty) = field_pretty {
-                        pretty.push_str(&field_pretty);
-                    } else {
-                        pretty.push_str("<err>");
-                    }
+                    pretty.push_str(&format!(
+                        "{}: {}, ",
+                        adt_field.ident.as_str(),
+                        match field_pretty {
+                            Ok(field_pretty) => field_pretty,
+                            Err(_err) => "<span style='color: red;'>&lt;err&gt;</span>".to_string(),
+                        }
+                    ));
                 }
                 pretty.push_str("}");
                 println!("pretty adt: {}", pretty);
@@ -201,9 +201,11 @@ fn pp_value<'a, 'tcx: 'a>(
     } else {
         Err(EvalErrorKind::AssumptionNotHeld)?;
     }
-    let bits = ecx
-        .value_to_scalar(ValTy { value: val, ty })?
-        .to_bits(layout.size)?;
+    let scalar = ecx.value_to_scalar(ValTy { value: val, ty })?;
+    if let Scalar::Ptr(_) = &scalar {
+        return Ok(print_primval(scalar)); // If the value is a ptr, print it
+    }
+    let bits = scalar.to_bits(layout.size)?;
     match ty.sty {
         TypeVariants::TyBool => {
             if bits == 0 {
