@@ -157,24 +157,23 @@ fn pp_value<'a, 'tcx: 'a>(
                 }
             }
         }
-        TypeVariants::TyAdt(adt_def, substs) => {
+        TypeVariants::TyAdt(adt_def, _substs) => {
             if let Value::Scalar(Scalar::Bits { defined: 0, .. }) = val {
                 Err(EvalErrorKind::AssumptionNotHeld)?;
             }
             println!("{:?} {:?} {:?}", val, ty, adt_def.variants);
             if adt_def.variants.len() == 1 {
                 let mut pretty = format!(
-                    "{:?} {{ ",
+                    "{} {{ ",
                     ecx.tcx
                         .absolute_item_path_str(adt_def.did)
                         .replace("<", "&lt;")
                         .replace(">", "&gt;")
                 );
-                let ty_layout = ecx.layout_of(ty)?;
                 for (i, adt_field) in adt_def.variants[0].fields.iter().enumerate() {
                     let field_pretty: EvalResult<String> = do catch {
                         let (field_val, field_layout) =
-                            ecx.read_field(val, None, ::rustc::mir::Field::new(i), ty_layout)?;
+                            ecx.read_field(val, None, ::rustc::mir::Field::new(i), layout)?;
                         pp_value(ecx, field_layout.ty, field_val)?
                     };
                     pretty.push_str(&format!(

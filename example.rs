@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 fn some_fn() {
     let mut val = 2;
     let mut my_wrapper = MyWrapper(&mut val);
@@ -9,12 +11,18 @@ fn some_fn() {
 
 struct MyWrapper<'a>(&'a mut u8);
 
-struct SomeRandomStruct<'a> {
+struct SomeRandomStruct<'a, A> {
     ernrer: u8,
     feijoc: u64,
     ioieoe: bool,
     fewije: char,
     chr_ref: &'a char,
+    efoiri: A,
+}
+
+union SomeUnion {
+    a: bool,
+    b: u64,
 }
 
 fn main() {
@@ -25,7 +33,9 @@ fn main() {
         ioieoe: true,
         fewije: '@',
         chr_ref: &chr,
+        efoiri: 2u16,
     };
+    let u = SomeUnion { a: true };
     let abc = Box::new(42);
     some_fn();
     let f = 1.4f64;
