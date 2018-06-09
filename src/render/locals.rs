@@ -161,34 +161,44 @@ fn pp_value<'a, 'tcx: 'a>(
             if let Value::Scalar(Scalar::Bits { defined: 0, .. }) = val {
                 Err(EvalErrorKind::AssumptionNotHeld)?;
             }
+
+            let variant = if adt_def.variants.len() == 1 {
+                0
+            } else if let Value::ByRef(_ptr, _align) = val {
+                // FIXME: read the discriminant in a safe way
+                // let ptr = ptr.to_ptr()?;
+                // unsafe { &mut *(ecx as *const EvalContext as *mut EvalContext) }.read_discriminant_as_variant_index(Place::from_ptr(ptr, align), ty)?
+                Err(EvalErrorKind::AssumptionNotHeld)?
+            } else {
+                Err(EvalErrorKind::AssumptionNotHeld)?
+            };
+
             //println!("{:?} {:?} {:?}", val, ty, adt_def.variants);
-            if adt_def.variants.len() == 1 {
-                let mut pretty = format!(
-                    "{} {{ ",
-                    ecx.tcx
-                        .absolute_item_path_str(adt_def.did)
-                        .replace("<", "&lt;")
-                        .replace(">", "&gt;")
-                );
-                for (i, adt_field) in adt_def.variants[0].fields.iter().enumerate() {
-                    let field_pretty: EvalResult<String> = do catch {
-                        let (field_val, field_layout) =
-                            ecx.read_field(val, None, ::rustc::mir::Field::new(i), layout)?;
-                        pp_value(ecx, field_layout.ty, field_val)?
-                    };
-                    pretty.push_str(&format!(
-                        "{}: {}, ",
-                        adt_field.ident.as_str(),
-                        match field_pretty {
-                            Ok(field_pretty) => field_pretty,
-                            Err(_err) => "<span style='color: red;'>&lt;err&gt;</span>".to_string(),
-                        }
-                    ));
-                }
-                pretty.push_str("}");
-                println!("pretty adt: {}", pretty);
-                return Ok(pretty);
+            let mut pretty = format!(
+                "{} {{ ",
+                ecx.tcx
+                    .absolute_item_path_str(adt_def.did)
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+            );
+            for (i, adt_field) in adt_def.variants[variant].fields.iter().enumerate() {
+                let field_pretty: EvalResult<String> = do catch {
+                    let (field_val, field_layout) =
+                        ecx.read_field(val, None, ::rustc::mir::Field::new(i), layout)?;
+                    pp_value(ecx, field_layout.ty, field_val)?
+                };
+                pretty.push_str(&format!(
+                    "{}: {}, ",
+                    adt_field.ident.as_str(),
+                    match field_pretty {
+                        Ok(field_pretty) => field_pretty,
+                        Err(_err) => "<span style='color: red;'>&lt;err&gt;</span>".to_string(),
+                    }
+                ));
             }
+            pretty.push_str("}");
+            println!("pretty adt: {}", pretty);
+            return Ok(pretty);
         }
         _ => {}
     }

@@ -33,7 +33,7 @@ fn main() {
         ioieoe: true,
         fewije: '@',
         chr_ref: &chr,
-        efoiri: 2u16,
+        efoiri: Some(2u16),
     };
     let u = SomeUnion { a: true };
     let abc = Box::new(42);
