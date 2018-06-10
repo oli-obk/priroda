@@ -8,7 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use dot;
 use step::LocalBreakpoints;
 use rustc::mir::*;
 use std::fmt::{self, Debug, Write};
@@ -166,7 +165,7 @@ fn write_node_label<W: Write>(
     // displayed as labels on the edges between blocks.
     let mut terminator_head = String::new();
     data.terminator().kind.fmt_head(&mut terminator_head).unwrap();
-    write!(w, r#"<tr><td align="left">{}</td></tr>"#, dot::escape_html(&terminator_head))?;
+    write!(w, r#"<tr><td align="left">{}</td></tr>"#, escape_html(&terminator_head))?;
 
     // Close the table
     writeln!(w, "</table>")
@@ -202,5 +201,9 @@ fn node(promoted: Option<usize>, block: BasicBlock) -> String {
 }
 
 fn escape<T: Debug>(t: &T) -> String {
-    dot::escape_html(&format!("{:?}", t))
+    escape_html(&format!("{:?}", t)).into_owned()
+}
+
+fn escape_html(s: &str) -> ::std::borrow::Cow<str> {
+    ::rocket::http::RawStr::from_str(s).html_escape()
 }

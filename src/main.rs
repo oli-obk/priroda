@@ -3,34 +3,33 @@
 #![recursion_limit = "5000"]
 #![plugin(rocket_codegen)]
 
-extern crate rocket;
-extern crate getopts;
-extern crate miri;
+extern crate syntax;
 #[macro_use(err)]
 extern crate rustc;
-extern crate rustc_mir;
 extern crate rustc_driver;
 extern crate rustc_data_structures;
-extern crate graphviz as dot;
+
+extern crate regex;
+#[macro_use]
+extern crate lazy_static;
+extern crate rocket;
+extern crate miri;
+
+extern crate log;
 extern crate env_logger;
 extern crate log_settings;
-extern crate log;
-extern crate syntax;
-extern crate syntax_pos;
-extern crate futures;
+
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
+
 extern crate open;
 extern crate promising_future;
 extern crate syntect;
 #[macro_use]
 extern crate horrorshow;
 extern crate cgraph;
-extern crate regex;
-#[macro_use]
-extern crate lazy_static;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
 
 mod render;
 mod step;
@@ -45,7 +44,6 @@ use rustc::mir;
 use rustc_driver::driver;
 
 use rocket::State;
-use rocket::fairing::AdHoc;
 use rocket::response::{Flash, Redirect};
 use rocket::response::content::*;
 use rocket::response::status::BadRequest;
@@ -161,10 +159,8 @@ impl PrirodaSender {
 }
 
 macro action_route($name:ident: $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
-    use rocket::State;
-    use rocket::response::{Flash, Redirect};
     #[get($route)]
-    pub fn $name(sender: State<::PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Flash<Redirect>> {
+    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Flash<Redirect>> {
         sender.do_work_and_redirect(move |$pcx| {
             (||$body)()
         })
@@ -236,7 +232,7 @@ fn server(sender: PrirodaSender) {
         .mount("breakpoints", step::bp_routes::routes())
         .mount("step", step::step_routes::routes())
         .mount("watch", watch::routes())
-        .attach(AdHoc::on_launch(|rocket| {
+        .attach(rocket::fairing::AdHoc::on_launch(|rocket| {
             let config = rocket.config();
             if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {
                 let addr = format!("http://{}:{}", config.address, config.port);
