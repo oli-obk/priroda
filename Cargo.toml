@@ -7,14 +7,14 @@ repository = "https://github.com/oli-obk/priroda"
 version = "0.1.0"
 
 [dependencies]
-regex = "0.2.5"
+regex = "1.0"
 lazy_static = "1.0.0"
 rocket = "0.3.8"
 rocket_codegen = "0.3.8"
 miri = { git = "https://github.com/solson/miri.git" }
 
-log = "0.3.6"
-env_logger = "0.3.3"
+log = "0.4"
+env_logger = "0.5"
 
 serde = "1.0.66"
 serde_derive = "1.0.66"

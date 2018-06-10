@@ -337,24 +337,25 @@ fn main() {
 
 fn init_logger() {
     const NSPACES: usize = 40;
-    let format = |record: &log::LogRecord| {
+    let format = |_fmt: &mut _, record: &log::Record| {
         // prepend spaces to indent the final string
         let indentation = log_settings::settings().indentation;
-        format!("{lvl}:{module}{depth:2}{indent:<indentation$} {text}",
+        println!("{lvl}:{module}{depth:2}{indent:<indentation$} {text}",
             lvl = record.level(),
-            module = record.location().module_path(),
+            module = record.module_path().unwrap_or(""),
             depth = indentation / NSPACES,
             indentation = indentation % NSPACES,
             indent = "",
-            text = record.args())
+            text = record.args());
+        Ok(())
     };
 
-    let mut builder = env_logger::LogBuilder::new();
-    builder.format(format).filter(None, log::LogLevelFilter::Info);
+    let mut builder = env_logger::Builder::new();
+    builder.format(format).filter(None, log::LevelFilter::Info);
 
     if std::env::var("MIRI_LOG").is_ok() {
         builder.parse(&std::env::var("MIRI_LOG").unwrap());
     }
 
-    builder.init().unwrap();
+    builder.init();
 }
