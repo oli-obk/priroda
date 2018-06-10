@@ -36,10 +36,9 @@ use std::boxed::FnBox;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use rustc::session::Session;
 use rustc::ty::{self, TyCtxt, ParamEnv};
 use rustc::mir;
-use rustc_driver::{driver, CompilerCalls};
+use rustc_driver::driver;
 
 use rocket::State;
 use rocket::fairing::AdHoc;
@@ -83,51 +82,6 @@ impl<'a, 'tcx: 'a> PrirodaContext<'a, 'tcx> {
 }
 
 type RResult<T> = Result<T, Html<String>>;
-
-struct MiriCompilerCalls(Arc<Mutex<u128>>, Arc<Mutex<::std::sync::mpsc::Receiver<Box<FnBox(&mut PrirodaContext) + Send>>>>);
-
-impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
-    fn build_controller(
-        &mut self,
-        _: &Session,
-        _: &getopts::Matches
-    ) -> driver::CompileController<'a> {
-        let mut control = driver::CompileController::basic();
-
-        let step_count = self.0.clone();
-        let receiver = self.1.clone();
-        control.after_analysis.callback = Box::new(move |state| {
-            state.session.abort_if_errors();
-            let mut step_count = step_count.lock().unwrap_or_else(|err|err.into_inner());
-
-            let mut pcx = PrirodaContext{
-                ecx: create_ecx(state.tcx.unwrap()),
-                bptree: step::load_breakpoints_from_file(),
-                step_count: &mut *step_count,
-                auto_refresh: true,
-                traces: watch::Traces::new(),
-            };
-
-            // Step to the position where miri crashed if it crashed
-            for _ in 0..*pcx.step_count {
-                match pcx.ecx.step() {
-                    Ok(true) => {}
-                    res => panic!("Miri is not deterministic causing error {:?}", res),
-                }
-            }
-
-            // Just ignore poisoning by panicking
-            let receiver = receiver.lock().unwrap_or_else(|err|err.into_inner());
-
-            // process commands
-            for command in receiver.iter() {
-                command.call_box((&mut pcx,));
-            }
-        });
-
-        control
-    }
-}
 
 fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
     let (node_id, span, _) = tcx.sess.entry_fn.borrow().expect("no main or start function found");
@@ -316,7 +270,38 @@ fn main() {
             let args = args.clone();
             // Ignore result to restart in case of a crash
             let _ = std::thread::spawn(move || {
-                rustc_driver::run_compiler(&*args, &mut MiriCompilerCalls(step_count, receiver), None, None);
+                let mut control = driver::CompileController::basic();
+
+                control.after_analysis.callback = Box::new(move |state| {
+                    state.session.abort_if_errors();
+                    let mut step_count = step_count.lock().unwrap_or_else(|err|err.into_inner());
+
+                    let mut pcx = PrirodaContext {
+                        ecx: create_ecx(state.tcx.unwrap()),
+                        bptree: step::load_breakpoints_from_file(),
+                        step_count: &mut *step_count,
+                        auto_refresh: true,
+                        traces: watch::Traces::new(),
+                    };
+
+                    // Step to the position where miri crashed if it crashed
+                    for _ in 0..*pcx.step_count {
+                        match pcx.ecx.step() {
+                            Ok(true) => {}
+                            res => panic!("Miri is not deterministic causing error {:?}", res),
+                        }
+                    }
+
+                    // Just ignore poisoning by panicking
+                    let receiver = receiver.lock().unwrap_or_else(|err|err.into_inner());
+
+                    // process commands
+                    for command in receiver.iter() {
+                        command.call_box((&mut pcx,));
+                    }
+                });
+
+                rustc_driver::run_compiler(&*args, Box::new(control), None, None);
             }).join();
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
