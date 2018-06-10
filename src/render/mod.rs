@@ -29,8 +29,8 @@ pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<S
                 : Raw(refresh_script(pcx))
             }
             body(onload="enable_mir_mousewheel()") {
-                link(rel="stylesheet", href="/resources/style.css");
                 link(rel="stylesheet", href="/resources/positioning.css");
+                link(rel="stylesheet", href=format!("/resources/style-{}.css", pcx.config.theme));
                 : t
             }
         }
@@ -39,7 +39,7 @@ pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<S
 }
 
 pub fn refresh_script(pcx: &PrirodaContext) -> String {
-    if pcx.auto_refresh {
+    if pcx.config.auto_refresh {
         r#"<script>
             setInterval(() => {
                 fetch("/step_count").then((res) => {
@@ -81,13 +81,13 @@ pub fn render_main_window(
             format!("{:?}", instance.def_id()),
         )
     }).collect();
-    let rendered_breakpoints: Vec<String> = pcx.bptree.iter().map(|&Breakpoint(def_id, bb, stmt)| format!("{:?}@{}:{}", def_id, bb.index(), stmt)).collect();
+    let rendered_breakpoints: Vec<String> = pcx.config.bptree.iter().map(|&Breakpoint(def_id, bb, stmt)| format!("{:?}@{}:{}", def_id, bb.index(), stmt)).collect();
     use rustc_data_structures::indexed_vec::Idx;
     let rendered_locals = locals::render_locals(&pcx.ecx, frame);
     let rendered_source = source::render_source(pcx.ecx.tcx.tcx, frame);
 
     let mir_graph = frame.map(|frame| {
-        graphviz::render_html(frame, pcx.bptree.for_def_id(frame.instance.def_id()))
+        graphviz::render_html(frame, pcx.config.bptree.for_def_id(frame.instance.def_id()))
     });
 
     let filename = pcx.ecx.tcx.sess.local_crate_source_file.as_ref().map(|f| f.display().to_string()).unwrap_or_else(|| "no file name".to_string());

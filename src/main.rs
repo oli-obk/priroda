@@ -6,7 +6,7 @@
 extern crate rocket;
 extern crate getopts;
 extern crate miri;
-#[macro_use]
+#[macro_use(err)]
 extern crate rustc;
 extern crate rustc_mir;
 extern crate rustc_driver;
@@ -27,6 +27,10 @@ extern crate cgraph;
 extern crate regex;
 #[macro_use]
 extern crate lazy_static;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
 
 mod render;
 mod step;
@@ -68,16 +72,38 @@ type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, 'tcx, miri::Evaluator<'
 
 pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: EvalContext<'a, 'tcx>,
-    bptree: BreakpointTree,
     step_count: &'a mut u128,
-    auto_refresh: bool,
     traces: watch::Traces<'tcx>,
+    config: &'a mut Config,
 }
 
 impl<'a, 'tcx: 'a> PrirodaContext<'a, 'tcx> {
     fn restart(&mut self) {
         self.traces.clear(); // Cleanup all traces
         self.ecx = ::create_ecx(self.ecx.tcx.tcx);
+    }
+}
+
+#[derive(Deserialize)]
+pub struct Config {
+    #[serde(default = "true_bool")]
+    auto_refresh: bool,
+    #[serde(default = "default_theme")]
+    theme: String,
+    #[serde(default)]
+    bptree: BreakpointTree,
+}
+
+fn true_bool() -> bool { true }
+fn default_theme() -> String { "default".to_string() }
+
+impl Default for Config {
+    fn default() -> Self {
+        ::std::fs::File::open("config.json").map(|f| serde_json::from_reader(f).unwrap()).unwrap_or(Config {
+            auto_refresh: true,
+            theme: "default".to_string(),
+            bptree: step::BreakpointTree::default(),
+        })
     }
 }
 
@@ -183,7 +209,7 @@ fn resources(path: PathBuf) -> Result<Content<&'static str>, std::io::Error> {
     match path.as_os_str().to_str() {
         Some("svg-pan-zoom.js") => Ok(Content(ContentType::JavaScript, include_str!("../resources/svg-pan-zoom.js"))),
         Some("zoom_mir.js") => Ok(Content(ContentType::JavaScript, include_str!("../resources/zoom_mir.js"))),
-        Some("style.css") => Ok(Content(ContentType::CSS, include_str!("../resources/style.css"))),
+        Some("style-default.css") => Ok(Content(ContentType::CSS, include_str!("../resources/style-default.css"))),
         Some("positioning.css") => Ok(Content(ContentType::CSS, include_str!("../resources/positioning.css"))),
         _ => Err(Error::new(ErrorKind::InvalidInput, "Unknown resource")),
     }
@@ -197,7 +223,7 @@ fn step_count(sender: State<PrirodaSender>) -> RResult<String> {
 }
 
 action_route!(disable_auto_refresh: "/disable_auto_refresh", |pcx| {
-        pcx.auto_refresh = false;
+        pcx.config.auto_refresh = false;
         "auto refresh disabled".to_string()
     });
 
@@ -257,6 +283,7 @@ fn main() {
     let (sender, receiver) = std::sync::mpsc::channel();
     let sender = PrirodaSender(Mutex::new(sender));
     let step_count = Arc::new(Mutex::new(0));
+    let config = Arc::new(Mutex::new(Config::default()));
 
     let handle = std::thread::spawn(move || {
         let args = Arc::new(args);
@@ -266,6 +293,7 @@ fn main() {
                 println!("\n============== Miri crashed - restart try {} ==============\n", i);
             }
             let step_count = step_count.clone();
+            let config = config.clone();
             let receiver = receiver.clone();
             let args = args.clone();
             // Ignore result to restart in case of a crash
@@ -275,13 +303,13 @@ fn main() {
                 control.after_analysis.callback = Box::new(move |state| {
                     state.session.abort_if_errors();
                     let mut step_count = step_count.lock().unwrap_or_else(|err|err.into_inner());
+                    let mut config = config.lock().unwrap_or_else(|err|err.into_inner());
 
                     let mut pcx = PrirodaContext {
                         ecx: create_ecx(state.tcx.unwrap()),
-                        bptree: step::load_breakpoints_from_file(),
                         step_count: &mut *step_count,
-                        auto_refresh: true,
                         traces: watch::Traces::new(),
+                        config: &mut *config,
                     };
 
                     // Step to the position where miri crashed if it crashed

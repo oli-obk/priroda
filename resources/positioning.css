@@ -1,3 +1,13 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0px;
+  height: 100vh;
+  overflow-y: hidden;
+}
+
 #left, #right {
   display: inline-block;
   width: calc(50vw - 4px);
@@ -9,8 +19,7 @@
 
 #mir {
   width: 100%;
-  height: calc(100% - 60px);
-  border: 2px grey solid;
+  height: calc(100% - 150px);
 }
 
 #mir > svg {
@@ -26,17 +35,12 @@
   height: 100%;
 }
 
-#stack {
-  border: grey 2px solid;
+#stack, #locals {
   overflow: auto;
-  margin: 2px 0;
-  padding: 2px;
 }
 
-#locals {
-  border: grey 2px solid;
-  overflow: auto;
-  margin: 2px 0;
+.vertical {
+  writing-mode: tb-rl;
 }
 
 @media only screen and (max-width: 600px) {

@@ -21,6 +21,9 @@ cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "b65e460ee323b31
 miri = { git = "https://github.com/solson/miri.git" }
 rocket = "0.3.8"
 rocket_codegen = "0.3.8"
+serde = "1.0.66"
+serde_derive = "1.0.66"
+serde_json = "1.0.20"
 
 # Uncomment to use local checkout of miri
 # [patch."https://github.com/solson/miri.git"]
