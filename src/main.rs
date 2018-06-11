@@ -77,8 +77,9 @@ pub struct PrirodaContext<'a, 'tcx: 'a> {
 
 impl<'a, 'tcx: 'a> PrirodaContext<'a, 'tcx> {
     fn restart(&mut self) {
-        self.traces.clear(); // Cleanup all traces
         self.ecx = ::create_ecx(self.ecx.tcx.tcx);
+        *self.step_count = 0;
+        self.traces.clear(); // Cleanup all traces
     }
 }
 
