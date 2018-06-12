@@ -140,10 +140,20 @@ impl PrirodaSender {
     }
 }
 
-macro action_route($name:ident: $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
+macro action_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
     #[get($route)]
     pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Flash<Redirect>> {
         sender.do_work_and_redirect(move |$pcx| {
+            (||$body)()
+        })
+    }
+}
+
+macro view_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
+    #[get($route)]
+    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Html<String>> {
+        sender.do_work(move |pcx| {
+            let $pcx = &*pcx;
             (||$body)()
         })
     }

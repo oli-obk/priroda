@@ -236,40 +236,28 @@ pub mod routes {
         ]
     }
 
-    #[get("/")]
-    fn index(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-        sender.do_work(|pcx| {
-            let flash = flash.map(|flash| flash.msg().to_string()).unwrap_or_else(String::new);
-            render::render_main_window(pcx, None, flash)
-        })
-    }
+    view_route!(index: "/", |pcx, flash: Option<rocket::request::FlashMessage>| {
+        let flash = flash.map(|flash| flash.msg().to_string()).unwrap_or_else(String::new);
+        render::render_main_window(pcx, None, flash)
+    });
 
-    #[get("/frame/<frame>")]
-    fn frame(flash: Option<rocket::request::FlashMessage>, sender: State<PrirodaSender>, frame: usize) -> RResult<Html<String>> {
-        sender.do_work(move |pcx| {
-            let flash = flash.map(|flash| flash.msg().to_string()).unwrap_or_else(String::new);
-            render::render_main_window(pcx, Some(frame), flash)
-        })
-    }
+    view_route!(frame: "/frame/<frame>", |pcx, flash: Option<rocket::request::FlashMessage>, frame: usize| {
+        let flash = flash.map(|flash| flash.msg().to_string()).unwrap_or_else(String::new);
+        render::render_main_window(pcx, Some(frame), flash)
+    });
 
     #[get("/frame/<frame>", rank = 42)] // Error handler
     fn frame_invalid(frame: String) -> BadRequest<String> {
         BadRequest(Some(format!("not a number: {:?}", frame.parse::<usize>().unwrap_err())))
     }
 
-    #[get("/ptr/<path..>")]
-    fn ptr(path: PathBuf, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-        sender.do_work(move |pcx| {
-            let path = path.to_string_lossy();
-            let mut matches = path.split('/');
-            render::render_ptr_memory(pcx, matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse))
-        })
-    }
+    view_route!(ptr: "/ptr/<path..>", |pcx, path: PathBuf| {
+        let path = path.to_string_lossy();
+        let mut matches = path.split('/');
+        render::render_ptr_memory(pcx, matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse))
+    });
 
-    #[get("/reverse_ptr/<ptr>")]
-    fn reverse_ptr(ptr: String, sender: State<PrirodaSender>) -> RResult<Html<String>> {
-        sender.do_work(move |pcx| {
-            render::render_reverse_ptr(pcx, Some(ptr.parse()))
-        })
-    }
+    view_route!(reverse_ptr: "/reverse_ptr/<ptr>", |pcx, ptr: String| {
+        render::render_reverse_ptr(pcx, Some(ptr.parse()))
+    });
 }

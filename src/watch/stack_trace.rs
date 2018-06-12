@@ -99,7 +99,7 @@ fn insert_stack_trace<T: Eq>(traces: &mut Vec<(T, u128)>, trace: T, count: u128)
     }
 }
 
-pub(super) fn show(pcx: &mut PrirodaContext, buf: &mut impl Write) -> io::Result<()> {
+pub(super) fn show(pcx: &PrirodaContext, buf: &mut impl Write) -> io::Result<()> {
     writeln!(buf, "{}\n", ::render::refresh_script(pcx)).unwrap();
     create_flame_graph(&pcx.ecx, &mut *buf, &pcx.traces.stack_traces_cpu, "Cpu usage", "instructions", "java", "flame_graph_cpu")?;
     create_flame_graph(&pcx.ecx, &mut *buf, &pcx.traces.stack_traces_mem, "Memory usage", "bytes", "mem", "flame_graph_mem")?;
