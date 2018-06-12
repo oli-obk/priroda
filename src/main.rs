@@ -39,7 +39,7 @@ use std::boxed::FnBox;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use rustc::ty::{self, TyCtxt, ParamEnv};
+use rustc::ty::{self, TyCtxt};
 use rustc::mir;
 use rustc_driver::driver;
 
@@ -50,11 +50,7 @@ use rocket::response::status::BadRequest;
 use rocket::http::ContentType;
 use promising_future::future_promise;
 
-use miri::{
-    StackPopCleanup,
-    AllocId,
-    Place,
-};
+use miri::AllocId;
 
 use step::BreakpointTree;
 
@@ -109,25 +105,10 @@ impl Default for Config {
 type RResult<T> = Result<T, Html<String>>;
 
 fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
-    let (node_id, span, _) = tcx.sess.entry_fn.borrow().expect("no main or start function found");
+    let (node_id, _, _) = tcx.sess.entry_fn.borrow().expect("no main or start function found");
     let main_id = tcx.hir.local_def_id(node_id);
 
-    let main_instance = ty::Instance::mono(tcx, main_id);
-
-    let mut ecx = EvalContext::new(tcx.at(span), ParamEnv::reveal_all(), Default::default(), Default::default());
-    let main_mir = ecx.load_mir(main_instance.def).expect("mir for `main` not found");
-
-    let return_type = main_mir.return_ty();
-    let return_layout = tcx.layout_of(ParamEnv::reveal_all().and(return_type)).expect("couldnt get layout for return pointer");
-    let return_ptr = ecx.memory.allocate(return_layout.size, return_layout.align, None).unwrap();
-    ecx.push_stack_frame(
-        main_instance,
-        span,
-        main_mir,
-        Place::from_ptr(return_ptr, return_layout.align),
-        StackPopCleanup::None,
-    ).unwrap();
-    ecx
+    miri::create_ecx(tcx, main_id, None).unwrap().0
 }
 
 pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>);

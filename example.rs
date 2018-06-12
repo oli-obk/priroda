@@ -16,7 +16,7 @@ struct SomeRandomStruct {
     fewije: char,
 }
 
-fn main() -> Result<(), std::io::Error> {
+fn main() {
     let _rer = SomeRandomStruct {
         ernrer: 24,
         feijoc: 34438,
@@ -33,5 +33,4 @@ fn main() -> Result<(), std::io::Error> {
     let _bcd: Box<[u8]> = Box::new([0, 1]);
     let _d = true;
     format!("ewioio: {}", abc);
-    Ok(())
 }
