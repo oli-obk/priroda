@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use rustc::ty::Instance;
-use rustc::mir::interpret::{Pointer, Allocation};
+use rustc::mir::interpret::{Allocation, Pointer};
 use rustc::ty::layout::Size;
+use rustc::ty::Instance;
 
-use ::*;
+use *;
 
 mod stack_trace;
 
@@ -68,24 +68,31 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
         // Collect alloc traces
         for (alloc_id, alloc_trace) in traces.alloc_traces.iter_mut() {
             if let Ok(alloc) = ecx.memory.get(*alloc_id) {
-                if let Some(&(prev_step_count, AllocTracePoint::Changed(ref prev_alloc))) = alloc_trace.trace_points.last() {
+                if let Some(&(prev_step_count, AllocTracePoint::Changed(ref prev_alloc))) =
+                    alloc_trace.trace_points.last()
+                {
                     if alloc == prev_alloc || *pcx.step_count == prev_step_count {
                         continue;
                     }
                 }
 
-                alloc_trace.trace_points.push((*pcx.step_count, AllocTracePoint::Changed(Allocation {
-                    bytes: alloc.bytes.clone(),
-                    relocations: alloc.relocations.clone(),
-                    undef_mask: alloc.undef_mask.clone(),
-                    align: alloc.align.clone(),
-                    runtime_mutability: alloc.runtime_mutability.clone(),
-                })));
+                alloc_trace.trace_points.push((
+                    *pcx.step_count,
+                    AllocTracePoint::Changed(Allocation {
+                        bytes: alloc.bytes.clone(),
+                        relocations: alloc.relocations.clone(),
+                        undef_mask: alloc.undef_mask.clone(),
+                        align: alloc.align.clone(),
+                        runtime_mutability: alloc.runtime_mutability.clone(),
+                    }),
+                ));
             } else {
                 if let Some(&(_, AllocTracePoint::Deallocated)) = alloc_trace.trace_points.last() {
                 } else if alloc_trace.trace_points.is_empty() {
                 } else {
-                    alloc_trace.trace_points.push((*pcx.step_count, AllocTracePoint::Deallocated));
+                    alloc_trace
+                        .trace_points
+                        .push((*pcx.step_count, AllocTracePoint::Deallocated));
                 }
             }
         }

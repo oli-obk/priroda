@@ -8,10 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use step::LocalBreakpoints;
+use miri::Frame;
 use rustc::mir::*;
 use std::fmt::{self, Debug, Write};
-use miri::Frame;
+use step::LocalBreakpoints;
 
 use rustc_data_structures::indexed_vec::Idx;
 
@@ -46,9 +46,14 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
             match blck.terminator().kind {
                 Goto { target } => (vec![target], None),
                 SwitchInt { ref targets, .. } => (targets.to_vec(), None),
-                Drop { target, unwind, .. } |
-                DropAndReplace { target, unwind, .. } => (vec![target], unwind),
-                Call { ref destination, cleanup, .. } => {
+                Drop { target, unwind, .. } | DropAndReplace { target, unwind, .. } => {
+                    (vec![target], unwind)
+                }
+                Call {
+                    ref destination,
+                    cleanup,
+                    ..
+                } => {
                     if let Some((_, target)) = *destination {
                         (vec![target], cleanup)
                     } else {
@@ -60,15 +65,29 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
         } else {
             (vec![], None)
         };
-        format!("let edge_colors = {{{}}};",
-            targets.into_iter().map(|target|(frame.block, target, "green"))
-                .chain(unwind.into_iter().map(|target|(frame.block, target, "red")))
-                .map(|(from, to, color)| format!("'bb{}->bb{}':'{}'", from.index(), to.index(), color))
+        format!(
+            "let edge_colors = {{{}}};",
+            targets
+                .into_iter()
+                .map(|target| (frame.block, target, "green"))
+                .chain(
+                    unwind
+                        .into_iter()
+                        .map(|target| (frame.block, target, "red"))
+                )
+                .map(|(from, to, color)| format!(
+                    "'bb{}->bb{}':'{}'",
+                    from.index(),
+                    to.index(),
+                    color
+                ))
                 .collect::<Vec<_>>()
                 .join(",")
         )
     };
-    rendered.write_fmt(format_args!(r##"<style>
+    rendered
+        .write_fmt(format_args!(
+            r##"<style>
         #node{} > text:nth-child({}) {{
             fill: red;
         }}
@@ -92,12 +111,22 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
                 el.classList.add("edge-" + edge_colors[title]);
             }}
         }}
-        </script>"##, bb, stmt, edge_colors = edge_colors)).unwrap();
+        </script>"##,
+            bb,
+            stmt,
+            edge_colors = edge_colors
+        ))
+        .unwrap();
     rendered
 }
 
 /// Write a graphviz DOT graph of a list of MIRs.
-pub fn render_mir_svg<W: Write>(mir: &Mir, breakpoints: LocalBreakpoints, w: &mut W, promoted: Option<usize>) -> fmt::Result {
+pub fn render_mir_svg<W: Write>(
+    mir: &Mir,
+    breakpoints: LocalBreakpoints,
+    w: &mut W,
+    promoted: Option<usize>,
+) -> fmt::Result {
     let mut dot = String::new();
     if let Some(promoted) = promoted {
         writeln!(dot, "digraph promoted{} {{", promoted)?;
@@ -120,7 +149,9 @@ pub fn render_mir_svg<W: Write>(mir: &Mir, breakpoints: LocalBreakpoints, w: &mu
         write_edges(source, mir, &mut dot)?;
     }
     writeln!(dot, "}}")?;
-    w.write_str(::std::str::from_utf8(&::cgraph::Graph::parse(dot).unwrap().render_dot().unwrap()).unwrap())
+    w.write_str(
+        ::std::str::from_utf8(&::cgraph::Graph::parse(dot).unwrap().render_dot().unwrap()).unwrap(),
+    )
 }
 
 /// Write a graphviz HTML-styled label for the given basic block, with
@@ -139,9 +170,12 @@ fn write_node_label<W: Write>(
     write!(w, r#"<table border="0" cellborder="1" cellspacing="0">"#)?;
 
     // Basic block number at the top.
-    write!(w, r#"<tr><td {attrs}>{blk}</td></tr>"#,
-           attrs=r#"bgcolor="gray" align="center""#,
-           blk=node(promoted, block))?;
+    write!(
+        w,
+        r#"<tr><td {attrs}>{blk}</td></tr>"#,
+        attrs = r#"bgcolor="gray" align="center""#,
+        blk = node(promoted, block)
+    )?;
 
     // List of statements in the middle.
     if !data.statements.is_empty() {
@@ -164,17 +198,34 @@ fn write_node_label<W: Write>(
     // Terminator head at the bottom, not including the list of successor blocks. Those will be
     // displayed as labels on the edges between blocks.
     let mut terminator_head = String::new();
-    data.terminator().kind.fmt_head(&mut terminator_head).unwrap();
-    write!(w, r#"<tr><td align="left">{}</td></tr>"#, escape_html(&terminator_head))?;
+    data.terminator()
+        .kind
+        .fmt_head(&mut terminator_head)
+        .unwrap();
+    write!(
+        w,
+        r#"<tr><td align="left">{}</td></tr>"#,
+        escape_html(&terminator_head)
+    )?;
 
     // Close the table
     writeln!(w, "</table>")
 }
 
 /// Write a graphviz DOT node for the given basic block.
-fn write_node<W: Write>(block: BasicBlock, mir: &Mir, breakpoints: LocalBreakpoints, promoted: Option<usize>, w: &mut W) -> fmt::Result {
+fn write_node<W: Write>(
+    block: BasicBlock,
+    mir: &Mir,
+    breakpoints: LocalBreakpoints,
+    promoted: Option<usize>,
+    w: &mut W,
+) -> fmt::Result {
     // Start a new node with the label to follow, in one of DOT's pseudo-HTML tables.
-    write!(w, r#"    "{}" [shape="none", label=<"#, node(promoted, block))?;
+    write!(
+        w,
+        r#"    "{}" [shape="none", label=<"#,
+        node(promoted, block)
+    )?;
     write_node_label(block, mir, breakpoints, promoted, w)?;
     // Close the node label and the node itself.
     writeln!(w, ">];")
@@ -186,7 +237,13 @@ fn write_edges<W: Write>(source: BasicBlock, mir: &Mir, w: &mut W) -> fmt::Resul
     let labels = terminator.kind.fmt_successor_labels();
 
     for (&target, label) in terminator.successors().zip(labels) {
-        writeln!(w, r#"    {} -> {} [label="{}"];"#, node(None, source), node(None, target), label)?;
+        writeln!(
+            w,
+            r#"    {} -> {} [label="{}"];"#,
+            node(None, source),
+            node(None, target),
+            label
+        )?;
     }
 
     Ok(())

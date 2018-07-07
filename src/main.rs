@@ -1,4 +1,11 @@
-#![feature(rustc_private, custom_attribute, decl_macro, plugin, fnbox, catch_expr)]
+#![feature(
+    rustc_private,
+    custom_attribute,
+    decl_macro,
+    plugin,
+    fnbox,
+    catch_expr
+)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
 #![plugin(rocket_codegen)]
@@ -6,17 +13,17 @@
 extern crate syntax;
 #[macro_use(err)]
 extern crate rustc;
-extern crate rustc_driver;
 extern crate rustc_data_structures;
+extern crate rustc_driver;
 
 extern crate regex;
 #[macro_use]
 extern crate lazy_static;
-extern crate rocket;
 extern crate miri;
+extern crate rocket;
 
-extern crate log;
 extern crate env_logger;
+extern crate log;
 extern crate log_settings;
 
 extern crate serde;
@@ -39,16 +46,16 @@ use std::boxed::FnBox;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use rustc::ty::{self, TyCtxt};
 use rustc::mir;
+use rustc::ty::{self, TyCtxt};
 use rustc_driver::driver;
 
-use rocket::State;
-use rocket::response::{Flash, Redirect};
+use promising_future::future_promise;
+use rocket::http::ContentType;
 use rocket::response::content::*;
 use rocket::response::status::BadRequest;
-use rocket::http::ContentType;
-use promising_future::future_promise;
+use rocket::response::{Flash, Redirect};
+use rocket::State;
 
 use miri::AllocId;
 
@@ -89,23 +96,33 @@ pub struct Config {
     bptree: BreakpointTree,
 }
 
-fn true_bool() -> bool { true }
-fn default_theme() -> String { "default".to_string() }
+fn true_bool() -> bool {
+    true
+}
+fn default_theme() -> String {
+    "default".to_string()
+}
 
 impl Default for Config {
     fn default() -> Self {
-        ::std::fs::File::open("config.json").map(|f| serde_json::from_reader(f).unwrap()).unwrap_or(Config {
-            auto_refresh: true,
-            theme: "default".to_string(),
-            bptree: step::BreakpointTree::default(),
-        })
+        ::std::fs::File::open("config.json")
+            .map(|f| serde_json::from_reader(f).unwrap())
+            .unwrap_or(Config {
+                auto_refresh: true,
+                theme: "default".to_string(),
+                bptree: step::BreakpointTree::default(),
+            })
     }
 }
 
 type RResult<T> = Result<T, Html<String>>;
 
 fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
-    let (node_id, _, _) = tcx.sess.entry_fn.borrow().expect("no main or start function found");
+    let (node_id, _, _) = tcx
+        .sess
+        .entry_fn
+        .borrow()
+        .expect("no main or start function found");
     let main_id = tcx.hir.local_def_id(node_id);
 
     miri::create_ecx(tcx, main_id, None).unwrap().0
@@ -115,28 +132,34 @@ pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaC
 
 impl PrirodaSender {
     fn do_work<'r, T, F>(&self, f: F) -> Result<T, Html<String>>
-        where T: rocket::response::Responder<'r> + Send + 'static,
-              F: FnOnce(&mut PrirodaContext) -> T + Send + 'static {
+    where
+        T: rocket::response::Responder<'r> + Send + 'static,
+        F: FnOnce(&mut PrirodaContext) -> T + Send + 'static,
+    {
         let (future, promise) = future_promise();
-        let sender = self.0.lock().unwrap_or_else(|err|err.into_inner());
+        let sender = self.0.lock().unwrap_or_else(|err| err.into_inner());
         match sender.send(Box::new(move |pcx: &mut PrirodaContext| {
             promise.set(f(pcx));
         })) {
             Ok(()) => match future.value() {
                 Some(val) => Ok(val),
-                None => Err(Html("<center><h1>Miri crashed please go to <a href='/'>index</a></h1></center>".to_string()))
+                None => Err(Html(
+                    "<center><h1>Miri crashed please go to <a href='/'>index</a></h1></center>"
+                        .to_string(),
+                )),
             },
-            Err(_) => {
-                Err(Html("<center><h1>Miri crashed too often. Please restart priroda.</h1></center>".to_string()))
-            }
+            Err(_) => Err(Html(
+                "<center><h1>Miri crashed too often. Please restart priroda.</h1></center>"
+                    .to_string(),
+            )),
         }
     }
 
     fn do_work_and_redirect<'r, F>(&self, f: F) -> Result<Flash<Redirect>, Html<String>>
-        where F: FnOnce(&mut PrirodaContext) -> String + Send + 'static {
-        self.do_work(move |pcx| {
-            Flash::success(Redirect::to("/"), f(pcx))
-        })
+    where
+        F: FnOnce(&mut PrirodaContext) -> String + Send + 'static,
+    {
+        self.do_work(move |pcx| Flash::success(Redirect::to("/"), f(pcx)))
     }
 }
 
@@ -169,10 +192,13 @@ fn please_panic(sender: State<PrirodaSender>) -> RResult<()> {
 
 #[get("/favicon.ico")]
 fn favicon() -> rocket::response::Content<Vec<u8>> {
-    Content(rocket::http::ContentType::BMP, ::std::fs::read("./resources/favicon.ico").unwrap())
+    Content(
+        rocket::http::ContentType::BMP,
+        ::std::fs::read("./resources/favicon.ico").unwrap(),
+    )
 }
 
-#[cfg(not(feature="static_resources"))]
+#[cfg(not(feature = "static_resources"))]
 #[get("/resources/<path..>")]
 fn resources(path: PathBuf) -> Result<Content<String>, std::io::Error> {
     use std::io::{Error, ErrorKind};
@@ -180,34 +206,44 @@ fn resources(path: PathBuf) -> Result<Content<String>, std::io::Error> {
     res_path.push(path);
     let content = ::std::fs::read_to_string(&res_path)?;
     Ok(Content(
-        match res_path.extension().and_then(|ext|ext.to_str()) {
+        match res_path.extension().and_then(|ext| ext.to_str()) {
             Some("css") => ContentType::CSS,
             Some("js") => ContentType::JavaScript,
             Some("svg") => ContentType::SVG,
             _ => Err(Error::new(ErrorKind::InvalidInput, "Invalid extension"))?,
         },
-        content
+        content,
     ))
 }
 
-#[cfg(feature="static_resources")]
+#[cfg(feature = "static_resources")]
 #[get("/resources/<path..>")]
 fn resources(path: PathBuf) -> Result<Content<&'static str>, std::io::Error> {
     use std::io::{Error, ErrorKind};
     match path.as_os_str().to_str() {
-        Some("svg-pan-zoom.js") => Ok(Content(ContentType::JavaScript, include_str!("../resources/svg-pan-zoom.js"))),
-        Some("zoom_mir.js") => Ok(Content(ContentType::JavaScript, include_str!("../resources/zoom_mir.js"))),
-        Some("style-default.css") => Ok(Content(ContentType::CSS, include_str!("../resources/style-default.css"))),
-        Some("positioning.css") => Ok(Content(ContentType::CSS, include_str!("../resources/positioning.css"))),
+        Some("svg-pan-zoom.js") => Ok(Content(
+            ContentType::JavaScript,
+            include_str!("../resources/svg-pan-zoom.js"),
+        )),
+        Some("zoom_mir.js") => Ok(Content(
+            ContentType::JavaScript,
+            include_str!("../resources/zoom_mir.js"),
+        )),
+        Some("style-default.css") => Ok(Content(
+            ContentType::CSS,
+            include_str!("../resources/style-default.css"),
+        )),
+        Some("positioning.css") => Ok(Content(
+            ContentType::CSS,
+            include_str!("../resources/positioning.css"),
+        )),
         _ => Err(Error::new(ErrorKind::InvalidInput, "Unknown resource")),
     }
 }
 
 #[get("/step_count")]
 fn step_count(sender: State<PrirodaSender>) -> RResult<String> {
-    sender.do_work(|pcx| {
-        format!("{}", pcx.step_count)
-    })
+    sender.do_work(|pcx| format!("{}", pcx.step_count))
 }
 
 action_route!(disable_auto_refresh: "/disable_auto_refresh", |pcx| {
@@ -219,7 +255,16 @@ fn server(sender: PrirodaSender) {
     use rocket::config::Value;
     rocket::ignite()
         .manage(sender)
-        .mount("/", routes![please_panic, favicon, resources, step_count, disable_auto_refresh])
+        .mount(
+            "/",
+            routes![
+                please_panic,
+                favicon,
+                resources,
+                step_count,
+                disable_auto_refresh
+            ],
+        )
         .mount("/", render::routes::routes())
         .mount("breakpoints", step::bp_routes::routes())
         .mount("step", step::step_routes::routes())
@@ -247,13 +292,9 @@ fn find_sysroot() -> String {
     let toolchain = option_env!("RUSTUP_TOOLCHAIN").or(option_env!("MULTIRUST_TOOLCHAIN"));
     match (home, toolchain) {
         (Some(home), Some(toolchain)) => format!("{}/toolchains/{}", home, toolchain),
-        _ => {
-            option_env!("RUST_SYSROOT")
-                .expect(
-                    "need to specify RUST_SYSROOT env var or use rustup or multirust",
-                )
-                .to_owned()
-        }
+        _ => option_env!("RUST_SYSROOT")
+            .expect("need to specify RUST_SYSROOT env var or use rustup or multirust")
+            .to_owned(),
     }
 }
 
@@ -278,7 +319,10 @@ fn main() {
         let receiver = Arc::new(Mutex::new(receiver));
         for i in 0..5 {
             if i != 0 {
-                println!("\n============== Miri crashed - restart try {} ==============\n", i);
+                println!(
+                    "\n============== Miri crashed - restart try {} ==============\n",
+                    i
+                );
             }
             let step_count = step_count.clone();
             let config = config.clone();
@@ -290,8 +334,8 @@ fn main() {
 
                 control.after_analysis.callback = Box::new(move |state| {
                     state.session.abort_if_errors();
-                    let mut step_count = step_count.lock().unwrap_or_else(|err|err.into_inner());
-                    let mut config = config.lock().unwrap_or_else(|err|err.into_inner());
+                    let mut step_count = step_count.lock().unwrap_or_else(|err| err.into_inner());
+                    let mut config = config.lock().unwrap_or_else(|err| err.into_inner());
 
                     let mut pcx = PrirodaContext {
                         ecx: create_ecx(state.tcx.unwrap()),
@@ -309,7 +353,7 @@ fn main() {
                     }
 
                     // Just ignore poisoning by panicking
-                    let receiver = receiver.lock().unwrap_or_else(|err|err.into_inner());
+                    let receiver = receiver.lock().unwrap_or_else(|err| err.into_inner());
 
                     // process commands
                     for command in receiver.iter() {
@@ -332,13 +376,15 @@ fn init_logger() {
     let format = |_fmt: &mut _, record: &log::Record| {
         // prepend spaces to indent the final string
         let indentation = log_settings::settings().indentation;
-        println!("{lvl}:{module}{depth:2}{indent:<indentation$} {text}",
+        println!(
+            "{lvl}:{module}{depth:2}{indent:<indentation$} {text}",
             lvl = record.level(),
             module = record.module_path().unwrap_or(""),
             depth = indentation / NSPACES,
             indentation = indentation % NSPACES,
             indent = "",
-            text = record.args());
+            text = record.args()
+        );
         Ok(())
     };
 

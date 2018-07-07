@@ -1,6 +1,6 @@
-use rustc_data_structures::indexed_vec::Idx;
 use rustc::hir::def_id::{CrateNum, DefId, DefIndex, DefIndexAddressSpace};
 use rustc::mir;
+use rustc_data_structures::indexed_vec::Idx;
 use std::collections::{HashMap, HashSet};
 use std::iter::Iterator;
 
@@ -16,18 +16,20 @@ pub enum ShouldContinue {
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct Breakpoint(pub DefId, pub mir::BasicBlock, pub usize);
 
-
 #[derive(Default)]
 pub struct BreakpointTree(HashMap<DefId, HashSet<Breakpoint>>);
 
 impl<'de> Deserialize<'de> for BreakpointTree {
     fn deserialize<D: Deserializer<'de>>(deser: D) -> Result<Self, D::Error> {
         let mut map = HashMap::new();
-        for (k,v) in HashMap::<String, HashSet<(usize, usize)>>::deserialize(deser)?.into_iter() {
+        for (k, v) in HashMap::<String, HashSet<(usize, usize)>>::deserialize(deser)?.into_iter() {
             let def_id = parse_def_id(&k).map_err(SerdeError::custom)?;
-            map.insert(def_id, v.into_iter().map(|(bb, instr)| {
-                Breakpoint(def_id, mir::BasicBlock::new(bb), instr)
-            }).collect::<HashSet<Breakpoint>>());
+            map.insert(
+                def_id,
+                v.into_iter()
+                    .map(|(bb, instr)| Breakpoint(def_id, mir::BasicBlock::new(bb), instr))
+                    .collect::<HashSet<Breakpoint>>(),
+            );
         }
         Ok(BreakpointTree(map))
     }
@@ -38,8 +40,11 @@ impl BreakpointTree {
         self.0.entry(bp.0).or_insert(HashSet::new()).insert(bp);
     }
 
-    pub fn remove_breakpoint(&mut self, bp: Breakpoint) -> bool{
-        self.0.get_mut(&bp.0).map(|local|local.remove(&bp)).unwrap_or(false)
+    pub fn remove_breakpoint(&mut self, bp: Breakpoint) -> bool {
+        self.0
+            .get_mut(&bp.0)
+            .map(|local| local.remove(&bp))
+            .unwrap_or(false)
     }
 
     pub fn remove_all(&mut self) {
@@ -56,13 +61,12 @@ impl BreakpointTree {
 
     pub fn is_at_breakpoint(&self, ecx: &EvalContext) -> bool {
         let frame = ecx.frame();
-        self.for_def_id(frame.instance.def_id()).breakpoint_exists(frame.block, frame.stmt)
+        self.for_def_id(frame.instance.def_id())
+            .breakpoint_exists(frame.block, frame.stmt)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Breakpoint> {
-        self.0.values().flat_map(|local| {
-            local.iter()
-        })
+        self.0.values().flat_map(|local| local.iter())
     }
 }
 
@@ -76,15 +80,15 @@ impl<'a> LocalBreakpoints<'a> {
     pub fn breakpoint_exists(&self, bb: mir::BasicBlock, stmt: usize) -> bool {
         match *self {
             LocalBreakpoints::NoBp => false,
-            LocalBreakpoints::SomeBps(bps) => bps.iter().any(|bp| {
-                bp.1 == bb && bp.2 == stmt
-            })
+            LocalBreakpoints::SomeBps(bps) => bps.iter().any(|bp| bp.1 == bb && bp.2 == stmt),
         }
     }
 }
 
 pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> String
-    where F: Fn(&EvalContext) -> ShouldContinue {
+where
+    F: Fn(&EvalContext) -> ShouldContinue,
+{
     let mut message = None;
     loop {
         if pcx.ecx.stack().len() <= 1 && is_ret(&pcx.ecx) {
@@ -98,7 +102,9 @@ pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> String
                 if let Some(frame) = pcx.ecx.stack().last() {
                     let blck = &frame.mir.basic_blocks()[frame.block];
                     if frame.stmt != blck.statements.len() {
-                        if ::should_hide_stmt(&blck.statements[frame.stmt]) && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx) {
+                        if ::should_hide_stmt(&blck.statements[frame.stmt])
+                            && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx)
+                        {
                             continue;
                         }
                     }
@@ -147,21 +153,36 @@ fn parse_breakpoint_from_url(s: &str) -> Result<Breakpoint, String> {
     //       CrateNum
 
     let s = s.replace("%20", " ");
-    let caps = regex.captures(&s).ok_or_else(||format!("Invalid breakpoint {}", s))?;
+    let caps = regex
+        .captures(&s)
+        .ok_or_else(|| format!("Invalid breakpoint {}", s))?;
 
     // Parse DefId
     let def_id = parse_def_id(caps.get(1).unwrap().as_str())?;
 
     // Parse block and stmt
-    let bb = mir::BasicBlock::new(caps.get(2).unwrap().as_str().parse::<usize>().map_err(|_| "block id is not a positive integer")?);
-    let stmt = caps.get(3).unwrap().as_str().parse::<usize>().map_err(|_| "stmt id is not a positive integer")?;
+    let bb = mir::BasicBlock::new(
+        caps.get(2)
+            .unwrap()
+            .as_str()
+            .parse::<usize>()
+            .map_err(|_| "block id is not a positive integer")?,
+    );
+    let stmt = caps
+        .get(3)
+        .unwrap()
+        .as_str()
+        .parse::<usize>()
+        .map_err(|_| "stmt id is not a positive integer")?;
 
     Ok(Breakpoint(def_id, bb, stmt))
 }
 
 fn parse_def_id(s: &str) -> Result<DefId, String> {
     let regex = ::regex::Regex::new(r#"DefId\((\d+)/(0|1):(\d+) ~ [^\)]+\)"#).unwrap();
-    let caps = regex.captures(&s).ok_or_else(||format!("Invalid def_id {}", s))?;
+    let caps = regex
+        .captures(&s)
+        .ok_or_else(|| format!("Invalid def_id {}", s))?;
 
     let crate_num = CrateNum::new(caps.get(1).unwrap().as_str().parse::<usize>().unwrap());
     let address_space = match caps.get(2).unwrap().as_str().parse::<u64>().unwrap() {
@@ -169,7 +190,12 @@ fn parse_def_id(s: &str) -> Result<DefId, String> {
         1 => DefIndexAddressSpace::High,
         _ => return Err("address_space is not 0 or 1".to_string()),
     };
-    let index = caps.get(3).unwrap().as_str().parse::<usize>().map_err(|_| "index is not a positive integer".to_string())?;
+    let index = caps
+        .get(3)
+        .unwrap()
+        .as_str()
+        .parse::<usize>()
+        .map_err(|_| "index is not a positive integer".to_string())?;
     let def_index = DefIndex::from_array_index(index, address_space);
     Ok(DefId {
         krate: crate_num,
@@ -178,18 +204,11 @@ fn parse_def_id(s: &str) -> Result<DefId, String> {
 }
 
 pub mod step_routes {
-    use ::action_route;
     use super::*;
+    use action_route;
 
     pub fn routes() -> Vec<::rocket::Route> {
-        routes! [
-            restart,
-            single,
-            single_back,
-            next,
-            return_,
-            continue_,
-        ]
+        routes![restart, single, single_back, next, return_, continue_,]
     }
 
     action_route!(restart: "/restart", |pcx| {
@@ -247,17 +266,12 @@ pub mod step_routes {
 }
 
 pub mod bp_routes {
-    use ::action_route;
     use super::*;
+    use action_route;
     use std::path::PathBuf;
 
     pub fn routes() -> Vec<::rocket::Route> {
-        routes! [
-            add_here,
-            add,
-            remove,
-            remove_all,
-        ]
+        routes![add_here, add, remove, remove_all,]
     }
 
     action_route!(add_here: "/add_here", |pcx| {
