@@ -208,7 +208,7 @@ pub mod step_routes {
     use action_route;
 
     pub fn routes() -> Vec<::rocket::Route> {
-        routes![restart, single, single_back, next, return_, continue_,]
+        routes![restart, single, single_back, next, return_, continue_]
     }
 
     action_route!(restart: "/restart", |pcx| {
@@ -271,7 +271,7 @@ pub mod bp_routes {
     use std::path::PathBuf;
 
     pub fn routes() -> Vec<::rocket::Route> {
-        routes![add_here, add, remove, remove_all,]
+        routes![add_here, add, remove, remove_all]
     }
 
     action_route!(add_here: "/add_here", |pcx| {

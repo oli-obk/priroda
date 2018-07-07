@@ -51,10 +51,9 @@ use rustc::ty::{self, TyCtxt};
 use rustc_driver::driver;
 
 use promising_future::future_promise;
-use rocket::http::ContentType;
 use rocket::response::content::*;
 use rocket::response::status::BadRequest;
-use rocket::response::{Flash, Redirect};
+use rocket::response::{Flash, NamedFile, Redirect};
 use rocket::State;
 
 use miri::AllocId;
@@ -190,36 +189,19 @@ fn please_panic(sender: State<PrirodaSender>) -> RResult<()> {
     })
 }
 
-#[get("/favicon.ico")]
-fn favicon() -> rocket::response::Content<Vec<u8>> {
-    Content(
-        rocket::http::ContentType::BMP,
-        ::std::fs::read("./resources/favicon.ico").unwrap(),
-    )
-}
-
 #[cfg(not(feature = "static_resources"))]
 #[get("/resources/<path..>")]
-fn resources(path: PathBuf) -> Result<Content<String>, std::io::Error> {
-    use std::io::{Error, ErrorKind};
+fn resources(path: PathBuf) -> Result<NamedFile, std::io::Error> {
     let mut res_path = PathBuf::from("./resources/");
     res_path.push(path);
-    let content = ::std::fs::read_to_string(&res_path)?;
-    Ok(Content(
-        match res_path.extension().and_then(|ext| ext.to_str()) {
-            Some("css") => ContentType::CSS,
-            Some("js") => ContentType::JavaScript,
-            Some("svg") => ContentType::SVG,
-            _ => Err(Error::new(ErrorKind::InvalidInput, "Invalid extension"))?,
-        },
-        content,
-    ))
+    NamedFile::open(res_path)
 }
 
 #[cfg(feature = "static_resources")]
 #[get("/resources/<path..>")]
 fn resources(path: PathBuf) -> Result<Content<&'static str>, std::io::Error> {
     use std::io::{Error, ErrorKind};
+    use rocket::http::ContentType;
     match path.as_os_str().to_str() {
         Some("svg-pan-zoom.js") => Ok(Content(
             ContentType::JavaScript,
@@ -246,25 +228,11 @@ fn step_count(sender: State<PrirodaSender>) -> RResult<String> {
     sender.do_work(|pcx| format!("{}", pcx.step_count))
 }
 
-action_route!(disable_auto_refresh: "/disable_auto_refresh", |pcx| {
-        pcx.config.auto_refresh = false;
-        "auto refresh disabled".to_string()
-    });
-
 fn server(sender: PrirodaSender) {
     use rocket::config::Value;
     rocket::ignite()
         .manage(sender)
-        .mount(
-            "/",
-            routes![
-                please_panic,
-                favicon,
-                resources,
-                step_count,
-                disable_auto_refresh
-            ],
-        )
+        .mount("/", routes![please_panic, resources, step_count])
         .mount("/", render::routes::routes())
         .mount("breakpoints", step::bp_routes::routes())
         .mount("step", step::step_routes::routes())

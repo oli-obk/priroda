@@ -265,7 +265,7 @@ pub mod routes {
     use *;
 
     pub fn routes() -> Vec<::rocket::Route> {
-        routes![index, frame, frame_invalid, ptr, reverse_ptr,]
+        routes![index, frame, frame_invalid, ptr, reverse_ptr]
     }
 
     view_route!(index: "/", |pcx, flash: Option<rocket::request::FlashMessage>| {
