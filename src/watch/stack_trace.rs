@@ -31,7 +31,6 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
             } => {
                 let instance = instance_for_call_operand(ecx, func);
                 let item_path = ecx.tcx.absolute_item_path_str(instance.def_id());
-                //println!("{}", item_path);
 
                 stack_trace.push((instance,));
                 insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);
@@ -102,11 +101,13 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
 }
 
 fn insert_stack_trace<T: Eq>(traces: &mut Vec<(T, u128)>, trace: T, count: u128) {
-    if traces.last().map(|t| &t.0) == Some(&trace) {
-        traces.last_mut().unwrap().1 += count;
-    } else {
-        traces.push((trace, count));
+    if let Some(t) = traces.last_mut() {
+        if t.0 == trace {
+            t.1 += count;
+            return;
+        }
     }
+    traces.push((trace, count));
 }
 
 pub(super) fn show(pcx: &PrirodaContext, buf: &mut impl Write) -> io::Result<()> {

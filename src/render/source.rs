@@ -14,6 +14,10 @@ thread_local! {
         let ps = SyntaxSet::load_defaults_nonewlines();
         ps.find_syntax_by_extension("rs").unwrap().to_owned()
     };
+
+    static THEME_SET: ThemeSet = {
+        ThemeSet::load_defaults()
+    };
 }
 
 // These are costly to create
@@ -51,65 +55,58 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
         instr_spans.push(span);
     }
 
-    let ts = ThemeSet::load_defaults();
-    let t = &ts.themes["Solarized (light)"];
-    let bg_color = t.settings.background.unwrap_or(Color::WHITE);
-    let mut h = RUST_SYNTAX.with(|syntax| HighlightLines::new(syntax, t));
+    let (bg_color, highlighted_sources) = THEME_SET.with(|ts| {
+        let t = &ts.themes["Solarized (light)"];
+        let bg_color = t.settings.background.unwrap_or(Color::WHITE);
+        let mut h = RUST_SYNTAX.with(|syntax| HighlightLines::new(syntax, t));
+        
+        let highlighted_sources = instr_spans
+            .iter()
+            .rev()
+            .map(|sp| {
+                let _ = codemap.span_to_snippet(*sp); // Ensure file src is loaded
 
-    let highlighted_sources = instr_spans
-        .iter()
-        .map(|sp| {
-            let _ = codemap.span_to_snippet(*sp); // Ensure file src is loaded
-
-            (
-                sp,
-                if let Ok(file_lines) = codemap.span_to_lines(*sp) {
+                let mut src: String = if let Ok(file_lines) = codemap.span_to_lines(*sp) {
                     if let Some(ref src) = file_lines.file.src {
-                        Ok(src.to_string())
+                        src.to_string()
                     } else if let Some(src) = file_lines.file.external_src.borrow().get_source() {
-                        Ok(src.to_string())
+                        src.to_string()
                     } else {
-                        Err("<no source info for span>".to_string())
+                        return (format!("{:?}", sp), "<no source info for span>".to_string());
                     }
                 } else {
-                    Err("<couldnt get lines for span>".to_string())
-                },
-            )
-        })
-        .map(|(sp, src)| match src {
-            Ok(mut file_src) => {
+                    return (format!("{:?}", sp), "<couldnt get lines for span>".to_string());
+                };
+
                 let lo = codemap.bytepos_to_file_charpos(sp.lo()).0;
                 let hi = codemap.bytepos_to_file_charpos(sp.hi()).0;
-                file_src.insert_str(hi as usize, "/*END_HIGHLIGHT*/");
-                file_src.insert_str(lo as usize, "/*BEG_HIGHLIGHT*/");
-                (sp, file_src)
-            }
-            Err(err) => (sp, err),
-        })
-        .map(|(sp, src)| {
-            (
-                format!("{:?}", sp),
-                src.split('\n')
+                src.insert_str(hi as usize, "/*END_HIGHLIGHT*/");
+                src.insert_str(lo as usize, "/*BEG_HIGHLIGHT*/");
+
+                let src = src.split('\n')
                     .into_iter()
                     .map(|l| {
                         let highlighted =
                             styles_to_coloured_html(&h.highlight(&l), IncludeBackground::No);
                         let highlighted = BEG_REGEX.replace(
-                    &highlighted,
-                    "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>",
-                );
+                            &highlighted,
+                            "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>",
+                        );
                         let highlighted = END_REGEX.replace(&highlighted, "</span>$1");
                         let highlighted = BOTH_REGEX.replace(
-                    &highlighted,
-                    "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>←</span>"
-                );
+                            &highlighted,
+                            "<span style='background-color: lightcoral; border-radius: 5px; padding: 1px;'>←</span>"
+                        );
                         highlighted.into_owned()
                     })
-                    .fold(String::new(), |acc, x| acc + "\n" + &x),
-            )
-        })
-        .rev()
-        .collect::<Vec<_>>();
+                    .fold(String::new(), |acc, x| acc + "\n" + &x);
+
+                (format!("{:?}", sp), src)
+            })
+            .collect::<Vec<_>>();
+        
+        (bg_color, highlighted_sources)
+    });
 
     box_html! {
         pre {
