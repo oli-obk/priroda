@@ -34,6 +34,7 @@ extern crate serde_json;
 
 extern crate open;
 extern crate promising_future;
+#[cfg(feature = "render_source")]
 extern crate syntect;
 #[macro_use]
 extern crate horrorshow;

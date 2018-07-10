@@ -22,7 +22,7 @@ serde_json = "1.0.20"
 
 open = "1.1.1"
 promising-future = "0.2"
-syntect = "2.0.0"
+syntect = { version = "2.0.0", optional = true }
 horrorshow = "0.6.2"
 cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "b65e460ee323b31dca55b5541141a6b73272e72a" }
 
@@ -35,3 +35,4 @@ version = "nightly"
 
 [features]
 static_resources = []
+render_source = ["syntect"]
