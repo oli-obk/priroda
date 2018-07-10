@@ -31,7 +31,7 @@ pub fn render_locals<'a, 'tcx: 'a>(
                     let name = local_decl
                         .name
                         .map(|n| n.as_str().to_string())
-                        .unwrap_or_else(|| String::new());
+                        .unwrap_or_else(String::new);
                     let ty = ecx.monomorphize(local_decl.ty, instance.substs);
                     let (alloc, val, style) = match val.map(|value| print_value(ecx, ty, value)) {
                         Some(Ok((alloc, text))) => (alloc, text, ""),

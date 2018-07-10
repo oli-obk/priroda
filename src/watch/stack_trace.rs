@@ -25,46 +25,41 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
     };
     if stmt == blck.statements.len() {
         use rustc::mir::TerminatorKind::*;
-        match blck.terminator().kind {
-            Call {
-                ref func, ref args, ..
-            } => {
-                let instance = instance_for_call_operand(ecx, func);
-                let item_path = ecx.tcx.absolute_item_path_str(instance.def_id());
+        if let Call { ref func, ref args, .. } = blck.terminator().kind {
+            let instance = instance_for_call_operand(ecx, func);
+            let item_path = ecx.tcx.absolute_item_path_str(instance.def_id());
 
-                stack_trace.push((instance,));
-                insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);
+            stack_trace.push((instance,));
+            insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);
 
-                let _: ::miri::EvalResult = do catch {
-                    let args = args
-                        .into_iter()
-                        .map(|op| ecx.eval_operand(op))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    match &item_path[..] {
-                        "alloc::alloc::::__rust_alloc" | "alloc::alloc::::__rust_alloc_zeroed" => {
-                            let size = ecx.value_to_scalar(args[0])?.to_usize(ecx)?;
+            let _: ::miri::EvalResult = do catch {
+                let args = args
+                    .into_iter()
+                    .map(|op| ecx.eval_operand(op))
+                    .collect::<Result<Vec<_>, _>>()?;
+                match &item_path[..] {
+                    "alloc::alloc::::__rust_alloc" | "alloc::alloc::::__rust_alloc_zeroed" => {
+                        let size = ecx.value_to_scalar(args[0])?.to_usize(ecx)?;
+                        insert_stack_trace(
+                            &mut traces.stack_traces_mem,
+                            stack_trace,
+                            size as u128,
+                        );
+                    }
+                    "alloc::alloc::::__rust_realloc" => {
+                        let old_size = ecx.value_to_scalar(args[1])?.to_usize(ecx)?;
+                        let new_size = ecx.value_to_scalar(args[3])?.to_usize(ecx)?;
+                        if new_size > old_size {
                             insert_stack_trace(
                                 &mut traces.stack_traces_mem,
                                 stack_trace,
-                                size as u128,
+                                (new_size - old_size) as u128,
                             );
                         }
-                        "alloc::alloc::::__rust_realloc" => {
-                            let old_size = ecx.value_to_scalar(args[1])?.to_usize(ecx)?;
-                            let new_size = ecx.value_to_scalar(args[3])?.to_usize(ecx)?;
-                            if new_size > old_size {
-                                insert_stack_trace(
-                                    &mut traces.stack_traces_mem,
-                                    stack_trace,
-                                    (new_size - old_size) as u128,
-                                );
-                            }
-                        }
-                        _ => {}
                     }
-                };
-            }
-            _ => {}
+                    _ => {}
+                }
+            };
         }
     }
 }
@@ -79,8 +74,7 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
         match func.ty.sty {
             ty::TyFnPtr(_) => {
                 let fn_ptr = ecx.value_to_scalar(func)?.to_ptr()?;
-                let instance = ecx.memory.get_fn(fn_ptr)?;
-                instance
+                ecx.memory.get_fn(fn_ptr)?
             }
             ty::TyFnDef(def_id, substs) => {
                 let substs = ecx.tcx.subst_and_normalize_erasing_regions(
@@ -137,7 +131,7 @@ pub(super) fn show(pcx: &PrirodaContext, buf: &mut impl Write) -> io::Result<()>
 fn create_flame_graph<'a, 'tcx: 'a>(
     ecx: &EvalContext<'a, 'tcx>,
     mut buf: impl Write,
-    traces: &Vec<(Vec<(Instance<'tcx>,)>, u128)>,
+    traces: &[(Vec<(Instance<'tcx>,)>, u128)],
     name: &str,
     count_name: &str,
     color_scheme: &str,
@@ -212,7 +206,7 @@ fn create_flame_graph<'a, 'tcx: 'a>(
 fn print_stack_traces<'a, 'tcx: 'a>(
     ecx: &EvalContext<'a, 'tcx>,
     mut buf: impl Write,
-    traces: &Vec<(Vec<(Instance<'tcx>,)>, u128)>,
+    traces: &[(Vec<(Instance<'tcx>,)>, u128)],
 ) -> ::std::fmt::Result {
     let name_for_instance = |i: Instance| {
         ecx.tcx

@@ -7,6 +7,7 @@
     catch_expr
 )]
 #![allow(unused_attributes)]
+#![cfg_attr(feature = "cargo-clippy", allow(cast_lossless))]
 #![recursion_limit = "5000"]
 #![plugin(rocket_codegen)]
 
@@ -153,20 +154,13 @@ impl PrirodaSender {
             )),
         }
     }
-
-    fn do_work_and_redirect<'r, F>(&self, f: F) -> Result<Flash<Redirect>, Html<String>>
-    where
-        F: FnOnce(&mut PrirodaContext) -> String + Send + 'static,
-    {
-        self.do_work(move |pcx| Flash::success(Redirect::to("/"), f(pcx)))
-    }
 }
 
 macro action_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
     #[get($route)]
     pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Flash<Redirect>> {
-        sender.do_work_and_redirect(move |$pcx| {
-            (||$body)()
+        sender.do_work(move |$pcx| {
+            Flash::success(Redirect::to("/"), (||$body)())
         })
     }
 }

@@ -172,8 +172,7 @@ fn write_node_label<W: Write>(
     // Basic block number at the top.
     write!(
         w,
-        r#"<tr><td {attrs}>{blk}</td></tr>"#,
-        attrs = r#"bgcolor="gray" align="center""#,
+        r#"<tr><td bgcolor="gray" align="center">{blk}</td></tr>"#,
         blk = node(promoted, block)
     )?;
 

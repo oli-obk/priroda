@@ -22,7 +22,7 @@ pub struct BreakpointTree(HashMap<DefId, HashSet<Breakpoint>>);
 impl<'de> Deserialize<'de> for BreakpointTree {
     fn deserialize<D: Deserializer<'de>>(deser: D) -> Result<Self, D::Error> {
         let mut map = HashMap::new();
-        for (k, v) in HashMap::<String, HashSet<(usize, usize)>>::deserialize(deser)?.into_iter() {
+        for (k, v) in HashMap::<String, HashSet<(usize, usize)>>::deserialize(deser)? {
             let def_id = parse_def_id(&k).map_err(SerdeError::custom)?;
             map.insert(
                 def_id,
@@ -37,7 +37,7 @@ impl<'de> Deserialize<'de> for BreakpointTree {
 
 impl BreakpointTree {
     pub fn add_breakpoint(&mut self, bp: Breakpoint) {
-        self.0.entry(bp.0).or_insert(HashSet::new()).insert(bp);
+        self.0.entry(bp.0).or_insert_with(HashSet::new).insert(bp);
     }
 
     pub fn remove_breakpoint(&mut self, bp: Breakpoint) -> bool {
@@ -77,8 +77,8 @@ pub enum LocalBreakpoints<'a> {
 }
 
 impl<'a> LocalBreakpoints<'a> {
-    pub fn breakpoint_exists(&self, bb: mir::BasicBlock, stmt: usize) -> bool {
-        match *self {
+    pub fn breakpoint_exists(self, bb: mir::BasicBlock, stmt: usize) -> bool {
+        match self {
             LocalBreakpoints::NoBp => false,
             LocalBreakpoints::SomeBps(bps) => bps.iter().any(|bp| bp.1 == bb && bp.2 == stmt),
         }
@@ -101,12 +101,11 @@ where
 
                 if let Some(frame) = pcx.ecx.stack().last() {
                     let blck = &frame.mir.basic_blocks()[frame.block];
-                    if frame.stmt != blck.statements.len() {
-                        if ::should_hide_stmt(&blck.statements[frame.stmt])
-                            && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx)
-                        {
+                    if frame.stmt != blck.statements.len()
+                        &&::should_hide_stmt(&blck.statements[frame.stmt])
+                        && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx)
+                    {
                             continue;
-                        }
                     }
                 }
                 if let ShouldContinue::Stop = continue_while(&pcx.ecx) {

@@ -136,7 +136,7 @@ pub fn render_main_window(
                     p { : message }
                 }
                 div(id="mir") {
-                    : Raw(mir_graph.unwrap_or("no current function".to_string()))
+                    : Raw(mir_graph.unwrap_or_else(|| "no current function".to_string()))
                 }
             }
             div(id="right") {
@@ -159,9 +159,9 @@ pub fn render_main_window(
                 div(id="breakpoints") {
                     : "Breakpoints: "; br;
                     table(border="1") {
-                        @ for bp in rendered_breakpoints.iter() {
+                        @ for bp in rendered_breakpoints {
                             tr {
-                                td { : bp }
+                                td { : &bp }
                                 td { a(href=format!("/breakpoints/remove/{}", bp)) { : "remove" } }
                             }
                         }

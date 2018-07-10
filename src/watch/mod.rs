@@ -66,7 +66,7 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
         let traces = &mut pcx.traces;
 
         // Collect alloc traces
-        for (alloc_id, alloc_trace) in traces.alloc_traces.iter_mut() {
+        for (alloc_id, alloc_trace) in &mut traces.alloc_traces {
             if let Ok(alloc) = ecx.memory.get(*alloc_id) {
                 if let Some(&(prev_step_count, AllocTracePoint::Changed(ref prev_alloc))) =
                     alloc_trace.trace_points.last()
@@ -82,18 +82,16 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
                         bytes: alloc.bytes.clone(),
                         relocations: alloc.relocations.clone(),
                         undef_mask: alloc.undef_mask.clone(),
-                        align: alloc.align.clone(),
-                        runtime_mutability: alloc.runtime_mutability.clone(),
+                        align: alloc.align,
+                        runtime_mutability: alloc.runtime_mutability,
                     }),
                 ));
+            } else if let Some(&(_, AllocTracePoint::Deallocated)) = alloc_trace.trace_points.last() {
+            } else if alloc_trace.trace_points.is_empty() {
             } else {
-                if let Some(&(_, AllocTracePoint::Deallocated)) = alloc_trace.trace_points.last() {
-                } else if alloc_trace.trace_points.is_empty() {
-                } else {
-                    alloc_trace
-                        .trace_points
-                        .push((*pcx.step_count, AllocTracePoint::Deallocated));
-                }
+                alloc_trace
+                    .trace_points
+                    .push((*pcx.step_count, AllocTracePoint::Deallocated));
             }
         }
     }
@@ -124,7 +122,7 @@ view_route!(show: "/show", |pcx| {
                 AllocTracePoint::Changed(alloc) => {
                     ::render::locals::print_alloc(
                         pcx.ecx.memory().pointer_size().bytes(),
-                        Pointer::new(*alloc_id, Size::from_bytes(0)).into(),
+                        Pointer::new(*alloc_id, Size::from_bytes(0)),
                         alloc
                     )
                 }
