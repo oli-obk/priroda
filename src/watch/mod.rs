@@ -86,7 +86,8 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
                         runtime_mutability: alloc.runtime_mutability,
                     }),
                 ));
-            } else if let Some(&(_, AllocTracePoint::Deallocated)) = alloc_trace.trace_points.last() {
+            } else if let Some(&(_, AllocTracePoint::Deallocated)) = alloc_trace.trace_points.last()
+            {
             } else if alloc_trace.trace_points.is_empty() {
             } else {
                 alloc_trace

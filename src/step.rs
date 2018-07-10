@@ -102,10 +102,10 @@ where
                 if let Some(frame) = pcx.ecx.stack().last() {
                     let blck = &frame.mir.basic_blocks()[frame.block];
                     if frame.stmt != blck.statements.len()
-                        &&::should_hide_stmt(&blck.statements[frame.stmt])
+                        && ::should_hide_stmt(&blck.statements[frame.stmt])
                         && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx)
                     {
-                            continue;
+                        continue;
                     }
                 }
                 if let ShouldContinue::Stop = continue_while(&pcx.ecx) {

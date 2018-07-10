@@ -59,7 +59,7 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
         let t = &ts.themes["Solarized (light)"];
         let bg_color = t.settings.background.unwrap_or(Color::WHITE);
         let mut h = RUST_SYNTAX.with(|syntax| HighlightLines::new(syntax, t));
-        
+
         let highlighted_sources = instr_spans
             .iter()
             .rev()
@@ -75,7 +75,10 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
                         return (format!("{:?}", sp), "<no source info for span>".to_string());
                     }
                 } else {
-                    return (format!("{:?}", sp), "<couldnt get lines for span>".to_string());
+                    return (
+                        format!("{:?}", sp),
+                        "<couldnt get lines for span>".to_string(),
+                    );
                 };
 
                 let lo = codemap.bytepos_to_file_charpos(sp.lo()).0;
@@ -83,7 +86,8 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
                 src.insert_str(hi as usize, "/*END_HIGHLIGHT*/");
                 src.insert_str(lo as usize, "/*BEG_HIGHLIGHT*/");
 
-                let src = src.split('\n')
+                let src = src
+                    .split('\n')
                     .into_iter()
                     .map(|l| {
                         let highlighted =
@@ -104,7 +108,7 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
                 (format!("{:?}", sp), src)
             })
             .collect::<Vec<_>>();
-        
+
         (bg_color, highlighted_sources)
     });
 

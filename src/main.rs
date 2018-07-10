@@ -194,8 +194,8 @@ fn resources(path: PathBuf) -> Result<NamedFile, std::io::Error> {
 #[cfg(feature = "static_resources")]
 #[get("/resources/<path..>")]
 fn resources(path: PathBuf) -> Result<Content<&'static str>, std::io::Error> {
-    use std::io::{Error, ErrorKind};
     use rocket::http::ContentType;
+    use std::io::{Error, ErrorKind};
     match path.as_os_str().to_str() {
         Some("svg-pan-zoom.js") => Ok(Content(
             ContentType::JavaScript,

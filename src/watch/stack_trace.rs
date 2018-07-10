@@ -25,7 +25,10 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
     };
     if stmt == blck.statements.len() {
         use rustc::mir::TerminatorKind::*;
-        if let Call { ref func, ref args, .. } = blck.terminator().kind {
+        if let Call {
+            ref func, ref args, ..
+        } = blck.terminator().kind
+        {
             let instance = instance_for_call_operand(ecx, func);
             let item_path = ecx.tcx.absolute_item_path_str(instance.def_id());
 
@@ -40,11 +43,7 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
                 match &item_path[..] {
                     "alloc::alloc::::__rust_alloc" | "alloc::alloc::::__rust_alloc_zeroed" => {
                         let size = ecx.value_to_scalar(args[0])?.to_usize(ecx)?;
-                        insert_stack_trace(
-                            &mut traces.stack_traces_mem,
-                            stack_trace,
-                            size as u128,
-                        );
+                        insert_stack_trace(&mut traces.stack_traces_mem, stack_trace, size as u128);
                     }
                     "alloc::alloc::::__rust_realloc" => {
                         let old_size = ecx.value_to_scalar(args[1])?.to_usize(ecx)?;
