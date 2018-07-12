@@ -2,7 +2,7 @@ use rustc::mir;
 use rustc::ty::{layout::Size, Ty, TyS, TypeAndMut, TypeVariants};
 use rustc_data_structures::indexed_vec::Idx;
 
-use miri::{Allocation, Frame, Pointer, Scalar, Value};
+use miri::{Allocation, Frame, Place, PlaceExtra, Pointer, Scalar, Value};
 
 use horrorshow::prelude::*;
 use horrorshow::Template;
@@ -11,47 +11,58 @@ use EvalContext;
 
 pub fn render_locals<'a, 'tcx: 'a>(
     ecx: &EvalContext<'a, 'tcx>,
-    frame: Option<&Frame<'tcx, 'tcx>>,
+    frame: &Frame<'tcx, 'tcx>,
 ) -> String {
-    //               name    ty      alloc        val     style
-    let locals: Vec<(String, String, Option<u64>, String, &str)> = frame.map_or(
-        Vec::new(),
-        |&Frame {
-             instance,
-             ref locals,
-             ref mir,
-             return_place: ref _return_place,
-             ..
-         }| {
-            locals
-                .iter()
-                .enumerate()
-                .map(|(id, &val)| {
-                    let local_decl = &mir.local_decls[mir::Local::new(id)];
-                    let name = local_decl
-                        .name
-                        .map(|n| n.as_str().to_string())
-                        .unwrap_or_else(String::new);
-                    let ty = ecx.monomorphize(local_decl.ty, instance.substs);
-                    let (alloc, val, style) = match val.map(|value| print_value(ecx, ty, value)) {
-                        Some(Ok((alloc, text))) => (alloc, text, ""),
-                        Some(Err(())) => (None, format!("{:?} does not exist", val), ""),
-                        None => (None, "&lt;uninit&gt;".to_owned(), "font-size: 0;"),
-                    };
-                    (name, ty.to_string(), alloc, val, style)
-                })
-                .collect()
-        },
-    );
+    let &Frame {
+        instance,
+        ref locals,
+        ref mir,
+        ref return_place,
+        ..
+    } = frame;
 
-    let (arg_count, var_count, tmp_count) =
-        frame.map_or((0, 0, 0), |&Frame { ref mir, .. }| {
-            (
-                mir.args_iter().count(),
-                mir.vars_iter().count(),
-                mir.temps_iter().count(),
-            )
-        });
+    //               name    ty      alloc        val     style
+    let locals: Vec<(String, String, Option<u64>, String, &str)> = locals
+        .iter()
+        .enumerate()
+        .map(|(id, &val)| {
+            let mut val = val;
+            let local_decl = &mir.local_decls[mir::Local::new(id)];
+            let name = local_decl
+                .name
+                .map(|n| n.as_str().to_string())
+                .unwrap_or_else(String::new);
+            let ty = ecx.monomorphize(local_decl.ty, instance.substs);
+            if id == 0 {
+                val = match *return_place {
+                    Place::Ptr { ptr, align, extra } => {
+                        if extra != PlaceExtra::None {
+                            return (
+                                name,
+                                ty.to_string(),
+                                None,
+                                "&lt;unsupported&gt;".to_owned(),
+                                "color: red;",
+                            );
+                        }
+                        Some(Value::ByRef(ptr, align))
+                    }
+                    Place::Local { frame, local } => ecx.stack()[frame].get_local(local).ok(),
+                };
+            }
+            let (alloc, val, style) = match val.map(|value| print_value(ecx, ty, value)) {
+                Some((alloc, text)) => (alloc, text, ""),
+                None => (None, "&lt;uninit&gt;".to_owned(), "font-size: 0;"),
+            };
+            (name, ty.to_string(), alloc, val, style)
+        })
+        .collect();
+
+    let (arg_count, var_count, tmp_count) = (
+        mir.args_iter().count(),
+        mir.vars_iter().count(),
+        mir.temps_iter().count(),
+    );
 
     (html! {
         table(border="1") {
@@ -90,7 +101,7 @@ pub fn render_locals<'a, 'tcx: 'a>(
         .unwrap()
 }
 
-pub fn print_primval(ty: Option<Ty>, val: Scalar) -> String {
+fn print_primval(ty: Option<Ty>, val: Scalar) -> String {
     match val {
         Scalar::Bits { defined: 0, .. } => "&lt;undef &gt;".to_string(),
         Scalar::Ptr(ptr) => format!(
@@ -152,11 +163,14 @@ pub fn print_primval(ty: Option<Ty>, val: Scalar) -> String {
     }
 }
 
-pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>, String), ()> {
+fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> (Option<u64>, String) {
     let txt = match val {
         Value::ByRef(ptr, _align) => {
-            let (alloc, txt, _len) = print_ptr(ecx, ptr)?;
-            return Ok((alloc, txt));
+            if let Ok((alloc, txt, _len)) = print_ptr(ecx, ptr) {
+                return (alloc, txt);
+            } else {
+                return (None, format!("{:?} does not exist", val));
+            }
         }
         Value::Scalar(primval) => print_primval(Some(ty), primval),
         Value::ScalarPair(val, extra) => {
@@ -182,10 +196,10 @@ pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>
                             if (ptr.offset.bytes() as u128) < allocation.bytes.len() as u128 {
                                 let alloc_bytes = &allocation.bytes[ptr.offset.bytes() as usize..];
                                 let s = String::from_utf8_lossy(alloc_bytes);
-                                return Ok((
+                                return (
                                     None,
                                     format!("\"{}\" ({}, {})", s, print_primval(None, val), len),
-                                ));
+                                );
                             }
                         }
                     }
@@ -199,7 +213,7 @@ pub fn print_value(ecx: &EvalContext, ty: Ty, val: Value) -> Result<(Option<u64>
             )
         }
     };
-    Ok((None, txt))
+    (None, txt)
 }
 
 pub fn print_ptr(ecx: &EvalContext, ptr: Scalar) -> Result<(Option<u64>, String, u64), ()> {

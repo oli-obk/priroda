@@ -99,7 +99,9 @@ pub fn render_main_window(
         .map(|&Breakpoint(def_id, bb, stmt)| format!("{:?}@{}:{}", def_id, bb.index(), stmt))
         .collect();
     use rustc_data_structures::indexed_vec::Idx;
-    let rendered_locals = locals::render_locals(&pcx.ecx, frame);
+    let rendered_locals = frame
+        .map(|frame| locals::render_locals(&pcx.ecx, frame))
+        .unwrap_or_else(String::new);
 
     #[cfg(feature = "render_source")]
     let rendered_source = source::render_source(pcx.ecx.tcx.tcx, frame);
@@ -183,90 +185,67 @@ pub fn render_main_window(
     )
 }
 
-pub fn render_reverse_ptr<ERR: ::std::fmt::Debug>(
-    pcx: &PrirodaContext,
-    alloc_id: Option<Result<u64, ERR>>,
-) -> Html<String> {
-    match alloc_id {
-        Some(Err(e)) => render_main_window(pcx, None, format!("not a number: {:?}", e)),
-        Some(Ok(alloc_id)) => {
-            let allocs: Vec<_> = pcx
-                .ecx
-                .memory()
-                .allocations()
-                .filter_map(|(id, alloc)| {
-                    alloc
-                        .relocations
-                        .values()
-                        .find(|reloc| reloc.0 == alloc_id)
-                        .map(|_| id)
-                })
-                .collect();
-            template(
-                pcx,
-                format!("Allocations with pointers to Allocation {}", alloc_id),
-                html!{
-                    @for id in allocs {
-                        a(href=format!("/ptr/{}", id.0)) { : format!("Allocation {}", id) }
-                        br;
-                    }
-                },
-            )
-        }
-        None => render_main_window(pcx, None, "no allocation selected".to_string()),
-    }
+pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
+    let allocs: Vec<_> = pcx
+        .ecx
+        .memory()
+        .allocations()
+        .filter_map(|(id, alloc)| {
+            alloc
+                .relocations
+                .values()
+                .find(|reloc| reloc.0 == alloc_id)
+                .map(|_| id)
+        })
+        .collect();
+    template(
+        pcx,
+        format!("Allocations with pointers to Allocation {}", alloc_id),
+        html!{
+            @for id in allocs {
+                a(href=format!("/ptr/{}", id.0)) { : format!("Allocation {}", id) }
+                br;
+            }
+        },
+    )
 }
 
-pub fn render_ptr_memory<ERR: ::std::fmt::Debug>(
-    pcx: &PrirodaContext,
-    alloc_id: Option<Result<AllocId, ERR>>,
-    offset: Option<Result<u64, ERR>>,
-) -> Html<String> {
+pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -> Html<String> {
     use horrorshow::Raw;
-    match (alloc_id, offset) {
-        (Some(Err(e)), _) | (_, Some(Err(e))) => {
-            render_main_window(pcx, None, format!("not a number: {:?}", e))
+    let (mem, offset, rest) = if let Ok((_, mem, bytes)) = locals::print_ptr(
+        &pcx.ecx,
+        Pointer {
+            alloc_id,
+            offset: Size::from_bytes(offset),
+        }.into(),
+    ) {
+        if bytes * 2 > offset {
+            (mem, offset, (bytes * 2 - offset - 1) as usize)
+        } else if bytes * 2 == 0 && offset == 0 {
+            (mem, 0, 0)
+        } else {
+            ("out of bounds offset".to_string(), 0, 0)
         }
-        (Some(Ok(alloc_id)), offset) => {
-            let offset = offset
-                .unwrap_or(Ok(0))
-                .expect("already checked in previous arm");
-            let (mem, offset, rest) = if let Ok((_, mem, bytes)) = locals::print_ptr(
-                &pcx.ecx,
-                Pointer {
-                    alloc_id,
-                    offset: Size::from_bytes(offset),
-                }.into(),
-            ) {
-                if bytes * 2 > offset {
-                    (mem, offset, (bytes * 2 - offset - 1) as usize)
-                } else if bytes * 2 == 0 && offset == 0 {
-                    (mem, 0, 0)
-                } else {
-                    ("out of bounds offset".to_string(), 0, 0)
-                }
-            } else {
-                ("unknown memory".to_string(), 0, 0)
-            };
-            template(
-                pcx,
-                format!("Allocation {}", alloc_id),
-                html!{
-                    span(style="font-family: monospace") {
-                        : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = rest)
-                    }
-                    br;
-                    span(style="font-family: monospace") { : Raw(mem) }
-                    br;
-                    a(href=format!("/reverse_ptr/{}", alloc_id)) { : "List allocations with pointers into this allocation" }
-                },
-            )
-        }
-        (None, _) => render_main_window(pcx, None, "no allocation selected".to_string()),
-    }
+    } else {
+        ("unknown memory".to_string(), 0, 0)
+    };
+    template(
+        pcx,
+        format!("Allocation {}", alloc_id),
+        html!{
+            span(style="font-family: monospace") {
+                : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = rest)
+            }
+            br;
+            span(style="font-family: monospace") { : Raw(mem) }
+            br;
+            a(href=format!("/reverse_ptr/{}", alloc_id)) { : "List allocations with pointers into this allocation" }
+        },
+    )
 }
 
 pub mod routes {
+    use super::*;
     use *;
 
     pub fn routes() -> Vec<::rocket::Route> {
@@ -291,13 +270,11 @@ pub mod routes {
         )))
     }
 
-    view_route!(ptr: "/ptr/<path..>", |pcx, path: PathBuf| {
-        let path = path.to_string_lossy();
-        let mut matches = path.split('/');
-        render::render_ptr_memory(pcx, matches.next().map(|id|Ok(AllocId(id.parse::<u64>()?))), matches.next().map(str::parse))
+    view_route!(ptr: "/ptr/<alloc_id>/<offset>", |pcx, alloc_id: u64, offset: u64| {
+        render::render_ptr_memory(pcx, AllocId(alloc_id), offset)
     });
 
-    view_route!(reverse_ptr: "/reverse_ptr/<ptr>", |pcx, ptr: String| {
-        render::render_reverse_ptr(pcx, Some(ptr.parse()))
+    view_route!(reverse_ptr: "/reverse_ptr/<ptr>", |pcx, ptr: u64| {
+        render::render_reverse_ptr(pcx, ptr)
     });
 }

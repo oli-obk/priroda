@@ -23,7 +23,7 @@ fn main() {
         ioieoe: true,
         fewije: '@',
     };
-    let abc = Box::new(0);
+    let abc = Box::new(42);
     some_fn();
     let f = 1.4f64;
     let _sum = 1f64
