@@ -103,7 +103,8 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
                         );
                         highlighted.into_owned()
                     })
-                    .fold(String::new(), |acc, x| acc + "\n" + &x);
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
                 (format!("{:?}", sp), src)
             })
