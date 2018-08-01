@@ -32,7 +32,7 @@ pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<S
             }
         }
     }).write_to_string(&mut buf)
-        .unwrap();
+    .unwrap();
     Html(buf)
 }
 
@@ -52,7 +52,8 @@ pub fn refresh_script(pcx: &PrirodaContext) -> String {
                     }
                 }).catch(()=>{});
             }, 1000);
-        </script>"#.replace("#step_count#", &format!("{}", pcx.step_count))
+        </script>"#
+            .replace("#step_count#", &format!("{}", pcx.step_count))
     } else {
         String::new()
     }
@@ -81,7 +82,8 @@ pub fn render_main_window(
                     .tcx
                     .def_key(instance.def_id())
                     .disambiguated_data
-                    .data == DefPathData::ClosureExpr
+                    .data
+                    == DefPathData::ClosureExpr
                 {
                     "inside call to closure".to_string()
                 } else {
@@ -90,8 +92,7 @@ pub fn render_main_window(
                 pcx.ecx.tcx.sess.codemap().span_to_string(span),
                 format!("{:?}", instance.def_id()),
             )
-        })
-        .collect();
+        }).collect();
     let rendered_breakpoints: Vec<String> = pcx
         .config
         .bptree
@@ -196,8 +197,7 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
                 .values()
                 .find(|reloc| reloc.0 == alloc_id)
                 .map(|_| id)
-        })
-        .collect();
+        }).collect();
     template(
         pcx,
         format!("Allocations with pointers to Allocation {}", alloc_id),

@@ -160,8 +160,7 @@ fn create_flame_graph<'a, 'tcx: 'a>(
                         last_crate = instance.def_id().krate;
                     }
                     name
-                })
-                .collect::<Vec<_>>()
+                }).collect::<Vec<_>>()
                 .join(";"),
             count
         ).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;

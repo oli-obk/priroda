@@ -240,8 +240,7 @@ fn server(sender: PrirodaSender) {
                     println!("open {} in your browser", addr);
                 }
             }
-        }))
-        .launch();
+        })).launch();
 }
 
 // Copied from miri/bin/miri.rs

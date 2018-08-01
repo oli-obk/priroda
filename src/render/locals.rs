@@ -55,8 +55,7 @@ pub fn render_locals<'a, 'tcx: 'a>(
                 None => (None, "&lt;uninit&gt;".to_owned(), "font-size: 0;"),
             };
             (name, ty.to_string(), alloc, val, style)
-        })
-        .collect();
+        }).collect();
 
     let (arg_count, var_count, tmp_count) = (
         mir.args_iter().count(),
