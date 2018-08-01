@@ -164,11 +164,9 @@ fn pp_value<'a, 'tcx: 'a>(
 
             let variant = if adt_def.variants.len() == 1 {
                 0
-            } else if let Value::ByRef(_ptr, _align) = val {
-                // FIXME: read the discriminant in a safe way
-                // let ptr = ptr.to_ptr()?;
-                // unsafe { &mut *(ecx as *const EvalContext as *mut EvalContext) }.read_discriminant_as_variant_index(Place::from_ptr(ptr, align), ty)?
-                Err(EvalErrorKind::AssumptionNotHeld)?
+            } else if let Value::ByRef(ptr, align) = val {
+                let ptr = ptr.to_ptr()?;
+                ecx.read_discriminant_as_variant_index(Place::from_ptr(ptr, align), layout)?
             } else {
                 Err(EvalErrorKind::AssumptionNotHeld)?
             };
