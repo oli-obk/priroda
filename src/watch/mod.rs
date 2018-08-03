@@ -117,27 +117,27 @@ view_route!(show: "/show", |pcx| {
             continue;
         }
 
-            writeln!(buf, "<h2>Alloc {}</h2>\n<table border='1'>", alloc_id.0).unwrap();
-            for (step_count, trace_point) in &alloc_trace.trace_points {
-                let content = match trace_point {
-                    AllocTracePoint::Changed(alloc) => {
-                        ::render::locals::print_alloc(
-                            pcx.ecx.memory().pointer_size().bytes(),
-                            Pointer::new(*alloc_id, Size::from_bytes(0)).into(),
-                            alloc,
-                            None,
-                        )
-                    }
-                    AllocTracePoint::Deallocated => "Dealloc".to_string(),
-                };
-                writeln!(
-                    buf,
-                    "<tr>\n<td>{}</td>\n<td>{}</td>\n</tr>",
-                    step_count,
-                    content
-                ).unwrap();
-            }
-            writeln!(buf, "</table>\n").unwrap();
+        writeln!(buf, "<h2>Alloc {}</h2>\n<table border='1'>", alloc_id.0).unwrap();
+        for (step_count, trace_point) in &alloc_trace.trace_points {
+            let content = match trace_point {
+                AllocTracePoint::Changed(alloc) => {
+                    ::render::locals::print_alloc(
+                        pcx.ecx.memory().pointer_size().bytes(),
+                        Pointer::new(*alloc_id, Size::from_bytes(0)),
+                        alloc,
+                        None
+                    )
+                }
+                AllocTracePoint::Deallocated => "Dealloc".to_string(),
+            };
+            writeln!(
+                buf,
+                "<tr>\n<td>{}</td>\n<td>{}</td>\n</tr>",
+                step_count,
+                content
+            ).unwrap();
+        }
+        writeln!(buf, "</table>\n").unwrap();
     }
 
     Html(buf)

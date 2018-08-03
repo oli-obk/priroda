@@ -226,18 +226,17 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
     } else {
         ("unknown memory".to_string(), 0, 0)
     };
-
     template(
         pcx,
         format!("Allocation {}", alloc_id),
         html!{
             span(style="font-family: monospace") {
-                    : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = rest)
-                }
-                br;
-                span(style="font-family: monospace") { : Raw(mem) }
-                br;
-                a(href=format!("/reverse_ptr/{}", alloc_id)) { : "List allocations with pointers into this allocation" }
+                : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = rest)
+            }
+            br;
+            span(style="font-family: monospace") { : Raw(mem) }
+            br;
+            a(href=format!("/reverse_ptr/{}", alloc_id)) { : "List allocations with pointers into this allocation" }
         },
     )
 }
