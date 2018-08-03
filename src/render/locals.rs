@@ -172,19 +172,26 @@ fn pp_value<'a, 'tcx: 'a>(
             };
 
             //println!("{:?} {:?} {:?}", val, ty, adt_def.variants);
-            let mut pretty = format!(
-                "{} {{ ",
-                ecx.tcx
-                    .absolute_item_path_str(adt_def.did)
-                    .replace("<", "&lt;")
-                    .replace(">", "&gt;")
-            );
+            let mut pretty = ecx
+                .tcx
+                .absolute_item_path_str(adt_def.did)
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .to_string();
+
+            if adt_def.is_enum() {
+                pretty.push_str("::");
+                pretty.push_str(&*adt_def.variants[variant].name.as_str());
+            }
+            pretty.push_str(" { ");
+
             for (i, adt_field) in adt_def.variants[variant].fields.iter().enumerate() {
                 let field_pretty: EvalResult<String> = do catch {
                     let (field_val, field_layout) =
                         ecx.read_field(val, None, ::rustc::mir::Field::new(i), layout)?;
                     pp_value(ecx, field_layout.ty, field_val)?
                 };
+
                 pretty.push_str(&format!(
                     "{}: {}, ",
                     adt_field.ident.as_str(),
