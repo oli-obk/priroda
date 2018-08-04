@@ -171,6 +171,10 @@ fn pp_value<'a, 'tcx: 'a>(
                 Err(EvalErrorKind::AssumptionNotHeld)?
             };
 
+            let adt_fields = &adt_def.variants[variant].fields;
+
+            let should_collapse = adt_fields.len() > 1;
+
             //println!("{:?} {:?} {:?}", val, ty, adt_def.variants);
             let mut pretty = ecx
                 .tcx
@@ -185,7 +189,11 @@ fn pp_value<'a, 'tcx: 'a>(
             }
             pretty.push_str(" { ");
 
-            for (i, adt_field) in adt_def.variants[variant].fields.iter().enumerate() {
+            if should_collapse {
+                pretty.push_str("<details>");
+            }
+
+            for (i, adt_field) in adt_fields.iter().enumerate() {
                 let field_pretty: EvalResult<String> = do catch {
                     let (field_val, field_layout) =
                         ecx.read_field(val, None, ::rustc::mir::Field::new(i), layout)?;
@@ -200,7 +208,15 @@ fn pp_value<'a, 'tcx: 'a>(
                         Err(_err) => "<span style='color: red;'>&lt;err&gt;</span>".to_string(),
                     }
                 ));
+                if should_collapse {
+                    pretty.push_str("<br>");
+                }
             }
+
+            if should_collapse {
+                pretty.push_str("</details>");
+            }
+
             pretty.push_str("}");
             println!("pretty adt: {}", pretty);
             return Ok(pretty);

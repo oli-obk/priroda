@@ -18,6 +18,12 @@ struct SomeRandomStruct<'a, A> {
     fewije: char,
     chr_ref: &'a char,
     efoiri: A,
+    irrfio: SomeOtherStruct,
+}
+
+struct SomeOtherStruct {
+    efufrr: u8,
+    frireg: u16,
 }
 
 union SomeUnion {
@@ -34,6 +40,10 @@ fn main() {
         fewije: '@',
         chr_ref: &chr,
         efoiri: Some(2u16),
+        irrfio: SomeOtherStruct {
+            efufrr: 34,
+            frireg: 45804,
+        },
     };
     let u = SomeUnion { a: true };
     let abc = Box::new(42);
