@@ -117,7 +117,7 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
         pre {
             code(id="the_code", style=format!("background-color: #{:02x}{:02x}{:02x}; display: block;", bg_color.r, bg_color.g, bg_color.b)) {
                 @ for (sp, source) in highlighted_sources {
-                    : sp;
+                    : sp; br;
                     : Raw(source);
                     br; br;
                 }
