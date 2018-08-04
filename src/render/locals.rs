@@ -239,7 +239,10 @@ fn pp_value<'a, 'tcx: 'a>(
             }
         }
         TypeVariants::TyUint(_) => Ok(format!("{0}", bits)),
-        TypeVariants::TyInt(_) => Ok(format!("{0}", bits as i128)),
+        TypeVariants::TyInt(_) => Ok(format!(
+            "{0}",
+            ::miri::sign_extend(ecx.tcx.tcx, bits, ty).unwrap() as i128
+        )),
         TypeVariants::TyFloat(float_ty) => {
             use syntax::ast::FloatTy::*;
             match float_ty {

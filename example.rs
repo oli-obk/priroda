@@ -13,7 +13,7 @@ struct MyWrapper<'a>(&'a mut u8);
 
 struct SomeRandomStruct<'a, A> {
     ernrer: u8,
-    feijoc: u64,
+    feijoc: i64,
     ioieoe: bool,
     fewije: char,
     chr_ref: &'a char,
@@ -29,7 +29,7 @@ fn main() {
     let chr = '4';
     let _rer = SomeRandomStruct {
         ernrer: 24,
-        feijoc: 34438,
+        feijoc: -34438,
         ioieoe: true,
         fewije: '@',
         chr_ref: &chr,
