@@ -1,6 +1,5 @@
 #![feature(
     rustc_private,
-    custom_attribute,
     decl_macro,
     plugin,
     fnbox,
