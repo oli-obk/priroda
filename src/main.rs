@@ -1,10 +1,4 @@
-#![feature(
-    rustc_private,
-    decl_macro,
-    plugin,
-    fnbox,
-    catch_expr
-)]
+#![feature(rustc_private, decl_macro, plugin, fnbox, catch_expr)]
 #![allow(unused_attributes)]
 #![cfg_attr(feature = "cargo-clippy", allow(cast_lossless))]
 #![recursion_limit = "5000"]
@@ -19,6 +13,8 @@ extern crate rustc_driver;
 extern crate regex;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate rental;
 extern crate miri;
 extern crate rocket;
 
@@ -33,7 +29,6 @@ extern crate serde_json;
 
 extern crate open;
 extern crate promising_future;
-#[cfg(feature = "render_source")]
 extern crate syntect;
 #[macro_use]
 extern crate horrorshow;

@@ -1,6 +1,5 @@
 mod graphviz;
 pub mod locals;
-#[cfg(feature = "render_source")]
 mod source;
 
 use rustc::hir::map::definitions::DefPathData;
@@ -104,10 +103,7 @@ pub fn render_main_window(
         .map(|frame| locals::render_locals(&pcx.ecx, frame))
         .unwrap_or_else(String::new);
 
-    #[cfg(feature = "render_source")]
     let rendered_source = source::render_source(pcx.ecx.tcx.tcx, frame);
-    #[cfg(not(feature = "render_source"))]
-    let rendered_source = String::new();
 
     let mir_graph = frame.map(|frame| {
         graphviz::render_html(frame, pcx.config.bptree.for_def_id(frame.instance.def_id()))
