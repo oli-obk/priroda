@@ -214,6 +214,7 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
             alloc_id,
             offset: Size::from_bytes(offset),
         }.into(),
+        None,
     ) {
         if bytes * 2 > offset {
             (mem, offset, (bytes * 2 - offset - 1) as usize)

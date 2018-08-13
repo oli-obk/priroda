@@ -124,7 +124,8 @@ view_route!(show: "/show", |pcx| {
                     ::render::locals::print_alloc(
                         pcx.ecx.memory().pointer_size().bytes(),
                         Pointer::new(*alloc_id, Size::from_bytes(0)),
-                        alloc
+                        alloc,
+                        None
                     )
                 }
                 AllocTracePoint::Deallocated => "Dealloc".to_string(),

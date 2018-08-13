@@ -220,7 +220,9 @@ pub mod step_routes {
     });
 
     action_route!(single_back: "/single_back", |pcx| {
+        let orig_step_count = *pcx.step_count;
         pcx.restart();
+        *pcx.step_count = orig_step_count;
         if *pcx.step_count > 0 {
             *pcx.step_count -= 1;
             for _ in 0..*pcx.step_count {
