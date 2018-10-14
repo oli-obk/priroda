@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use crate::rustc::mir::interpret::{Allocation, Pointer};
+use crate::rustc::mir::interpret::{Allocation, Pointer, PointerArithmetic};
 use crate::rustc::ty::layout::Size;
 use crate::rustc::ty::Instance;
 
@@ -83,7 +83,7 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
                         relocations: alloc.relocations.clone(),
                         undef_mask: alloc.undef_mask.clone(),
                         align: alloc.align,
-                        runtime_mutability: alloc.runtime_mutability,
+                        mutability: alloc.mutability,
                     }),
                 ));
             } else if let Some(&(_, AllocTracePoint::Deallocated)) = alloc_trace.trace_points.last()

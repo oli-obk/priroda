@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use miri::Frame;
 use crate::rustc::ty::TyCtxt;
-use crate::syntax::codemap::Span;
+use crate::syntax::source_map::Span;
+use miri::Frame;
 
 use horrorshow::prelude::*;
 use syntect::easy::HighlightLines;
@@ -160,10 +160,10 @@ fn get_highlighter<T>(f: impl FnOnce(HighlightLines) -> T) -> (Color, T) {
 }
 
 fn get_file_source_for_span(tcx: TyCtxt, sp: Span) -> Result<(String, usize, usize), String> {
-    let codemap = tcx.sess.codemap();
-    let _ = codemap.span_to_snippet(sp); // Ensure file src is loaded
+    let source_map = tcx.sess.source_map();
+    let _ = source_map.span_to_snippet(sp); // Ensure file src is loaded
 
-    let src = if let Ok(file_lines) = codemap.span_to_lines(sp) {
+    let src = if let Ok(file_lines) = source_map.span_to_lines(sp) {
         if let Some(ref src) = file_lines.file.src {
             src.to_string()
         } else if let Some(src) = file_lines.file.external_src.borrow().get_source() {
@@ -174,8 +174,8 @@ fn get_file_source_for_span(tcx: TyCtxt, sp: Span) -> Result<(String, usize, usi
     } else {
         return Err("<couldnt get lines for span>".to_string());
     };
-    let lo = codemap.bytepos_to_file_charpos(sp.lo()).0;
-    let hi = codemap.bytepos_to_file_charpos(sp.hi()).0;
+    let lo = source_map.bytepos_to_file_charpos(sp.lo()).0;
+    let hi = source_map.bytepos_to_file_charpos(sp.hi()).0;
     Ok((src, lo, hi))
 }
 

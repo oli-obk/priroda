@@ -8,12 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use miri::Frame;
 use crate::rustc::mir::*;
-use std::fmt::{self, Debug, Write};
 use crate::step::LocalBreakpoints;
-
-use crate::rustc_data_structures::indexed_vec::Idx;
+use miri::Frame;
+use std::fmt::{self, Debug, Write};
 
 pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
     let mut rendered = String::new();
@@ -24,7 +22,6 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
     }
     let (bb, stmt) = {
         let blck = &frame.mir.basic_blocks()[frame.block];
-        use crate::rustc_data_structures::indexed_vec::Idx;
         (
             frame.block.index() + 1,
             if frame.stmt == blck.statements.len() {

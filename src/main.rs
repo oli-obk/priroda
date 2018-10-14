@@ -1,6 +1,5 @@
-#![feature(rustc_private, decl_macro, plugin, fnbox, catch_expr, try_blocks)]
+#![feature(rustc_private, decl_macro, plugin, fnbox, try_blocks)]
 #![allow(unused_attributes)]
-#![cfg_attr(feature = "cargo-clippy", allow(cast_lossless))]
 #![recursion_limit = "5000"]
 #![plugin(rocket_codegen)]
 
@@ -43,7 +42,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::rustc::mir;
-use crate::rustc::ty::{self, TyCtxt};
+use crate::rustc::ty::TyCtxt;
 use crate::rustc_driver::driver;
 
 use promising_future::future_promise;
@@ -120,7 +119,7 @@ fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx
         .expect("no main or start function found");
     let main_id = tcx.hir.local_def_id(node_id);
 
-    miri::create_ecx(tcx, main_id, None).unwrap().0
+    miri::create_ecx(tcx, main_id, None, false).unwrap()
 }
 
 pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>);
@@ -287,38 +286,41 @@ fn main() {
             let args = args.clone();
             // Ignore result to restart in case of a crash
             let _ = std::thread::spawn(move || {
-                let mut control = driver::CompileController::basic();
+                let _ = rustc_driver::run(move || {
+                    let mut control = driver::CompileController::basic();
 
-                control.after_analysis.callback = Box::new(move |state| {
-                    state.session.abort_if_errors();
-                    let mut step_count = step_count.lock().unwrap_or_else(|err| err.into_inner());
-                    let mut config = config.lock().unwrap_or_else(|err| err.into_inner());
+                    control.after_analysis.callback = Box::new(move |state| {
+                        state.session.abort_if_errors();
+                        let mut step_count =
+                            step_count.lock().unwrap_or_else(|err| err.into_inner());
+                        let mut config = config.lock().unwrap_or_else(|err| err.into_inner());
 
-                    let mut pcx = PrirodaContext {
-                        ecx: create_ecx(state.tcx.unwrap()),
-                        step_count: &mut *step_count,
-                        traces: watch::Traces::new(),
-                        config: &mut *config,
-                    };
+                        let mut pcx = PrirodaContext {
+                            ecx: create_ecx(state.tcx.unwrap()),
+                            step_count: &mut *step_count,
+                            traces: watch::Traces::new(),
+                            config: &mut *config,
+                        };
 
-                    // Step to the position where miri crashed if it crashed
-                    for _ in 0..*pcx.step_count {
-                        match pcx.ecx.step() {
-                            Ok(true) => {}
-                            res => panic!("Miri is not deterministic causing error {:?}", res),
+                        // Step to the position where miri crashed if it crashed
+                        for _ in 0..*pcx.step_count {
+                            match pcx.ecx.step() {
+                                Ok(true) => {}
+                                res => panic!("Miri is not deterministic causing error {:?}", res),
+                            }
                         }
-                    }
 
-                    // Just ignore poisoning by panicking
-                    let receiver = receiver.lock().unwrap_or_else(|err| err.into_inner());
+                        // Just ignore poisoning by panicking
+                        let receiver = receiver.lock().unwrap_or_else(|err| err.into_inner());
 
-                    // process commands
-                    for command in receiver.iter() {
-                        command.call_box((&mut pcx,));
-                    }
+                        // process commands
+                        for command in receiver.iter() {
+                            command.call_box((&mut pcx,));
+                        }
+                    });
+
+                    rustc_driver::run_compiler(&*args, Box::new(control), None, None)
                 });
-
-                rustc_driver::run_compiler(&*args, Box::new(control), None, None);
             })
             .join();
             std::thread::sleep(std::time::Duration::from_millis(200));

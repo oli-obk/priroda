@@ -89,7 +89,7 @@ pub fn render_main_window(
                 } else {
                     instance.to_string()
                 },
-                pcx.ecx.tcx.sess.codemap().span_to_string(span),
+                pcx.ecx.tcx.sess.source_map().span_to_string(span),
                 format!("{:?}", instance.def_id()),
             )
         })
@@ -100,7 +100,6 @@ pub fn render_main_window(
         .iter()
         .map(|&Breakpoint(def_id, bb, stmt)| format!("{:?}@{}:{}", def_id, bb.index(), stmt))
         .collect();
-    use crate::rustc_data_structures::indexed_vec::Idx;
     let rendered_locals = frame
         .map(|frame| locals::render_locals(&pcx.ecx, frame))
         .unwrap_or_else(String::new);
@@ -184,6 +183,8 @@ pub fn render_main_window(
     )
 }
 
+// TODO Memory::allocations doesn't exist anymore
+/*
 pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
     let allocs: Vec<_> = pcx
         .ecx
@@ -208,6 +209,7 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
         },
     )
 }
+*/
 
 pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -> Html<String> {
     use horrorshow::Raw;
@@ -216,6 +218,7 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
         Pointer {
             alloc_id,
             offset: Size::from_bytes(offset),
+            tag: (),
         }
         .into(),
         None,
@@ -250,7 +253,7 @@ pub mod routes {
     use crate::*;
 
     pub fn routes() -> Vec<::rocket::Route> {
-        routes![index, frame, frame_invalid, ptr, reverse_ptr]
+        routes![index, frame, frame_invalid, ptr /*, reverse_ptr*/]
     }
 
     view_route!(index: "/", |pcx, flash: Option<rocket::request::FlashMessage>| {
@@ -275,7 +278,10 @@ pub mod routes {
         render::render_ptr_memory(pcx, AllocId(alloc_id), offset)
     });
 
+    // TODO Memory::allocations doesn't exist anymore
+    /*
     view_route!(reverse_ptr: "/reverse_ptr/<ptr>", |pcx, ptr: u64| {
         render::render_reverse_ptr(pcx, ptr)
     });
+    */
 }

@@ -2,8 +2,7 @@ use std::fmt::Write;
 use std::io::{self, Write as IoWrite};
 use std::process::{Command, Stdio};
 
-use miri::ScalarExt;
-use crate::rustc::ty::{Instance, InstanceDef};
+use crate::rustc::ty::{self, Instance, InstanceDef, ParamEnv};
 
 use crate::*;
 
@@ -38,16 +37,16 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
             let _: ::miri::EvalResult = try {
                 let args = args
                     .into_iter()
-                    .map(|op| ecx.eval_operand(op))
+                    .map(|op| ecx.eval_operand(op, None))
                     .collect::<Result<Vec<_>, _>>()?;
                 match &item_path[..] {
                     "alloc::alloc::::__rust_alloc" | "alloc::alloc::::__rust_alloc_zeroed" => {
-                        let size = ecx.value_to_scalar(args[0])?.to_usize(ecx)?;
+                        let size = ecx.read_scalar(args[0])?.to_usize(ecx.tcx.tcx)?;
                         insert_stack_trace(&mut traces.stack_traces_mem, stack_trace, size as u128);
                     }
                     "alloc::alloc::::__rust_realloc" => {
-                        let old_size = ecx.value_to_scalar(args[1])?.to_usize(ecx)?;
-                        let new_size = ecx.value_to_scalar(args[3])?.to_usize(ecx)?;
+                        let old_size = ecx.read_scalar(args[1])?.to_usize(ecx.tcx.tcx)?;
+                        let new_size = ecx.read_scalar(args[3])?.to_usize(ecx.tcx.tcx)?;
                         if new_size > old_size {
                             insert_stack_trace(
                                 &mut traces.stack_traces_mem,
@@ -68,23 +67,23 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
     func: &'tcx crate::rustc::mir::Operand,
 ) -> Instance<'tcx> {
     let res: ::miri::EvalResult<Instance> = try {
-        let func = ecx.eval_operand(func)?;
+        let func = ecx.eval_operand(func, None)?;
 
-        match func.ty.sty {
-            ty::TyFnPtr(_) => {
-                let fn_ptr = ecx.value_to_scalar(func)?.to_ptr()?;
+        match func.layout.ty.sty {
+            ty::FnPtr(_) => {
+                let fn_ptr = ecx.read_scalar(func)?.to_ptr()?;
                 ecx.memory.get_fn(fn_ptr)?
             }
-            ty::TyFnDef(def_id, substs) => {
+            ty::FnDef(def_id, substs) => {
                 let substs = ecx.tcx.subst_and_normalize_erasing_regions(
                     ecx.substs(),
-                    ecx.param_env,
+                    ParamEnv::reveal_all(),
                     &substs,
                 );
-                ty::Instance::resolve(*ecx.tcx, ecx.param_env, def_id, substs).unwrap()
+                ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), def_id, substs).unwrap()
             }
             _ => {
-                let msg = format!("can't handle callee of type {:?}", func.ty);
+                let msg = format!("can't handle callee of type {:?}", func.layout.ty);
                 (err!(Unimplemented(msg)) as ::miri::EvalResult<_>)?;
                 unreachable!()
             }
