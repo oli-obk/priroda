@@ -74,12 +74,14 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
                     unwind
                         .into_iter()
                         .map(|target| (frame.block, target, "red"))
-                ).map(|(from, to, color)| format!(
+                )
+                .map(|(from, to, color)| format!(
                     "'bb{}->bb{}':'{}'",
                     from.index(),
                     to.index(),
                     color
-                )).collect::<Vec<_>>()
+                ))
+                .collect::<Vec<_>>()
                 .join(",")
         )
     };
@@ -113,7 +115,8 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
             bb,
             stmt,
             edge_colors = edge_colors
-        )).unwrap();
+        ))
+        .unwrap();
     rendered
 }
 

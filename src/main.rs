@@ -234,7 +234,8 @@ fn server(sender: PrirodaSender) {
                     println!("open {} in your browser", addr);
                 }
             }
-        })).launch();
+        }))
+        .launch();
 }
 
 // Copied from miri/bin/miri.rs
@@ -318,7 +319,8 @@ fn main() {
                 });
 
                 rustc_driver::run_compiler(&*args, Box::new(control), None, None);
-            }).join();
+            })
+            .join();
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
         println!("\n============== Miri crashed too often. Aborting ==============\n");

@@ -128,7 +128,8 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send
                         })
                         .rent(|highlighted| (format!("{:?}", sp), mark_span(highlighted, lo, hi)))
                 })
-            }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
         highlighted_sources
     });

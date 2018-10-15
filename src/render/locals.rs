@@ -59,7 +59,8 @@ pub fn render_locals<'a, 'tcx: 'a>(
                 None => (None, "&lt;uninit&gt;".to_owned(), "font-size: 0;"),
             };
             (name, ty.to_string(), alloc, val, style)
-        }).collect();
+        })
+        .collect();
 
     let (arg_count, var_count, tmp_count) = (
         mir.args_iter().count(),
@@ -146,11 +147,10 @@ fn pp_value<'a, 'tcx: 'a>(
                 if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
                     let offset = ptr.offset.bytes();
                     if (offset as u128) < allocation.bytes.len() as u128 {
-                        let alloc_bytes =
-                            &allocation.bytes[offset as usize
-                                                  ..(offset as usize)
-                                                      .checked_add(len as usize)
-                                                      .ok_or(EvalErrorKind::AssumptionNotHeld)?];
+                        let alloc_bytes = &allocation.bytes[offset as usize
+                            ..(offset as usize)
+                                .checked_add(len as usize)
+                                .ok_or(EvalErrorKind::AssumptionNotHeld)?];
                         let s = String::from_utf8_lossy(alloc_bytes);
                         return Ok(format!("\"{}\"", s));
                     }

@@ -160,10 +160,12 @@ fn create_flame_graph<'a, 'tcx: 'a>(
                         last_crate = instance.def_id().krate;
                     }
                     name
-                }).collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
                 .join(";"),
             count
-        ).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        )
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     }
 
     //::std::fs::write(format!("./resources/{}.txt", _file_name), flame_data.as_bytes())?;
@@ -223,7 +225,8 @@ fn print_stack_traces<'a, 'tcx: 'a>(
                 "{nil: <indent$}",
                 nil = "",
                 indent = 4 * (stack_trace.len() - 1)
-            ).replace(" ", "&nbsp;")
+            )
+            .replace(" ", "&nbsp;")
         )?;
     }
     writeln!(buf, "</ul>")?;

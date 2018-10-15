@@ -30,7 +30,8 @@ pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<S
                 : t
             }
         }
-    }).write_to_string(&mut buf)
+    })
+    .write_to_string(&mut buf)
     .unwrap();
     Html(buf)
 }
@@ -91,7 +92,8 @@ pub fn render_main_window(
                 pcx.ecx.tcx.sess.codemap().span_to_string(span),
                 format!("{:?}", instance.def_id()),
             )
-        }).collect();
+        })
+        .collect();
     let rendered_breakpoints: Vec<String> = pcx
         .config
         .bptree
@@ -193,7 +195,8 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
                 .values()
                 .find(|reloc| reloc.0 == alloc_id)
                 .map(|_| id)
-        }).collect();
+        })
+        .collect();
     template(
         pcx,
         format!("Allocations with pointers to Allocation {}", alloc_id),
@@ -213,7 +216,8 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
         Pointer {
             alloc_id,
             offset: Size::from_bytes(offset),
-        }.into(),
+        }
+        .into(),
         None,
     ) {
         if bytes * 2 > offset {
