@@ -1,16 +1,16 @@
-use rustc::mir::{self, interpret::EvalErrorKind};
-use rustc::ty::{
+use crate::rustc::mir::{self, interpret::EvalErrorKind};
+use crate::rustc::ty::{
     layout::{Abi, LayoutOf, Size},
     Ty, TyS, TypeAndMut, TypeVariants,
 };
-use rustc_data_structures::indexed_vec::Idx;
+use crate::rustc_data_structures::indexed_vec::Idx;
 
 use miri::{Allocation, EvalResult, Frame, Place, PlaceExtra, Pointer, Scalar, ValTy, Value};
 
 use horrorshow::prelude::*;
 use horrorshow::Template;
 
-use EvalContext;
+use crate::EvalContext;
 
 pub fn render_locals<'a, 'tcx: 'a>(
     ecx: &EvalContext<'a, 'tcx>,
@@ -194,9 +194,9 @@ fn pp_value<'a, 'tcx: 'a>(
             }
 
             for (i, adt_field) in adt_fields.iter().enumerate() {
-                let field_pretty: EvalResult<String> = do catch {
+                let field_pretty: EvalResult<String> = try {
                     let (field_val, field_layout) =
-                        ecx.read_field(val, None, ::rustc::mir::Field::new(i), layout)?;
+                        ecx.read_field(val, None, crate::rustc::mir::Field::new(i), layout)?;
                     pp_value(ecx, field_layout.ty, field_val)?
                 };
 
@@ -260,7 +260,7 @@ fn pp_value<'a, 'tcx: 'a>(
             ::miri::sign_extend(ecx.tcx.tcx, bits, ty).unwrap() as i128
         )),
         TypeVariants::TyFloat(float_ty) => {
-            use syntax::ast::FloatTy::*;
+            use crate::syntax::ast::FloatTy::*;
             match float_ty {
                 F32 if bits < ::std::u32::MAX as u128 => {
                     Ok(format!("{}", <f32>::from_bits(bits as u32)))

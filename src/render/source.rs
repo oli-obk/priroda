@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use miri::Frame;
-use rustc::ty::TyCtxt;
-use syntax::codemap::Span;
+use crate::rustc::ty::TyCtxt;
+use crate::syntax::codemap::Span;
 
 use horrorshow::prelude::*;
 use syntect::easy::HighlightLines;

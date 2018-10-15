@@ -1,4 +1,4 @@
-#![feature(rustc_private, decl_macro, plugin, fnbox, catch_expr)]
+#![feature(rustc_private, decl_macro, plugin, fnbox, catch_expr, try_blocks)]
 #![allow(unused_attributes)]
 #![cfg_attr(feature = "cargo-clippy", allow(cast_lossless))]
 #![recursion_limit = "5000"]
@@ -42,9 +42,9 @@ use std::boxed::FnBox;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use rustc::mir;
-use rustc::ty::{self, TyCtxt};
-use rustc_driver::driver;
+use crate::rustc::mir;
+use crate::rustc::ty::{self, TyCtxt};
+use crate::rustc_driver::driver;
 
 use promising_future::future_promise;
 use rocket::response::content::*;
@@ -54,10 +54,10 @@ use rocket::State;
 
 use miri::AllocId;
 
-use step::BreakpointTree;
+use crate::step::BreakpointTree;
 
 fn should_hide_stmt(stmt: &mir::Statement) -> bool {
-    use rustc::mir::StatementKind::*;
+    use crate::rustc::mir::StatementKind::*;
     match stmt.kind {
         StorageLive(_) | StorageDead(_) | Validate(_, _) | EndRegion(_) | Nop => true,
         _ => false,
@@ -75,7 +75,7 @@ pub struct PrirodaContext<'a, 'tcx: 'a> {
 
 impl<'a, 'tcx: 'a> PrirodaContext<'a, 'tcx> {
     fn restart(&mut self) {
-        self.ecx = ::create_ecx(self.ecx.tcx.tcx);
+        self.ecx = create_ecx(self.ecx.tcx.tcx);
         *self.step_count = 0;
         self.traces.clear(); // Cleanup all traces
     }
@@ -153,7 +153,7 @@ impl PrirodaSender {
 
 macro action_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
     #[get($route)]
-    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Flash<Redirect>> {
+    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> crate::RResult<Flash<Redirect>> {
         sender.do_work(move |$pcx| {
             Flash::success(Redirect::to("/"), (||$body)())
         })
@@ -162,7 +162,7 @@ macro action_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_t
 
 macro view_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
     #[get($route)]
-    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Html<String>> {
+    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> crate::RResult<Html<String>> {
         sender.do_work(move |pcx| {
             let $pcx = &*pcx;
             (||$body)()

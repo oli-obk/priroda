@@ -1,12 +1,12 @@
-use rustc::hir::def_id::{CrateNum, DefId, DefIndex, DefIndexAddressSpace};
-use rustc::mir;
-use rustc_data_structures::indexed_vec::Idx;
+use crate::rustc::hir::def_id::{CrateNum, DefId, DefIndex, DefIndexAddressSpace};
+use crate::rustc::mir;
+use crate::rustc_data_structures::indexed_vec::Idx;
 use std::collections::{HashMap, HashSet};
 use std::iter::Iterator;
 
 use serde::de::{Deserialize, Deserializer, Error as SerdeError};
 
-use {EvalContext, PrirodaContext};
+use crate::{EvalContext, PrirodaContext};
 
 pub enum ShouldContinue {
     Continue,
@@ -97,12 +97,12 @@ where
         match pcx.ecx.step() {
             Ok(true) => {
                 *pcx.step_count += 1;
-                ::watch::step_callback(pcx);
+                crate::watch::step_callback(pcx);
 
                 if let Some(frame) = pcx.ecx.stack().last() {
                     let blck = &frame.mir.basic_blocks()[frame.block];
                     if frame.stmt != blck.statements.len()
-                        && ::should_hide_stmt(&blck.statements[frame.stmt])
+                        && crate::should_hide_stmt(&blck.statements[frame.stmt])
                         && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx)
                     {
                         continue;
@@ -133,7 +133,7 @@ pub fn is_ret(ecx: &EvalContext) -> bool {
         let basic_block = &stack.mir.basic_blocks()[stack.block];
 
         match basic_block.terminator().kind {
-            ::rustc::mir::TerminatorKind::Return => stack.stmt >= basic_block.statements.len(),
+            crate::rustc::mir::TerminatorKind::Return => stack.stmt >= basic_block.statements.len(),
             _ => false,
         }
     } else {
@@ -204,7 +204,7 @@ fn parse_def_id(s: &str) -> Result<DefId, String> {
 
 pub mod step_routes {
     use super::*;
-    use action_route;
+    use crate::action_route;
 
     pub fn routes() -> Vec<::rocket::Route> {
         routes![restart, single, single_back, next, return_, continue_]
@@ -227,7 +227,7 @@ pub mod step_routes {
             *pcx.step_count -= 1;
             for _ in 0..*pcx.step_count {
                 match pcx.ecx.step() {
-                    Ok(true) => ::watch::step_callback(pcx), // Rebuild traces till the current instruction
+                    Ok(true) => crate::watch::step_callback(pcx), // Rebuild traces till the current instruction
                     res => return format!("Miri is not deterministic causing error {:?}", res),
                 }
             }
@@ -268,7 +268,7 @@ pub mod step_routes {
 
 pub mod bp_routes {
     use super::*;
-    use action_route;
+    use crate::action_route;
     use std::path::PathBuf;
 
     pub fn routes() -> Vec<::rocket::Route> {

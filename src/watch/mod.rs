@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use rustc::mir::interpret::{Allocation, Pointer};
-use rustc::ty::layout::Size;
-use rustc::ty::Instance;
+use crate::rustc::mir::interpret::{Allocation, Pointer};
+use crate::rustc::ty::layout::Size;
+use crate::rustc::ty::Instance;
 
-use *;
+use crate::*;
 
 mod stack_trace;
 
@@ -121,7 +121,7 @@ view_route!(show: "/show", |pcx| {
         for (step_count, trace_point) in &alloc_trace.trace_points {
             let content = match trace_point {
                 AllocTracePoint::Changed(alloc) => {
-                    ::render::locals::print_alloc(
+                    crate::render::locals::print_alloc(
                         pcx.ecx.memory().pointer_size().bytes(),
                         Pointer::new(*alloc_id, Size::from_bytes(0)),
                         alloc,
@@ -146,7 +146,7 @@ view_route!(show: "/show", |pcx| {
 #[get("/continue_and_show")]
 pub fn continue_and_show(sender: State<PrirodaSender>) -> RResult<Html<String>> {
     sender.do_work(move |pcx| {
-        ::step::step(pcx, |_ecx| ::step::ShouldContinue::Continue);
+        crate::step::step(pcx, |_ecx| crate::step::ShouldContinue::Continue);
     })?;
     show(sender)
 }

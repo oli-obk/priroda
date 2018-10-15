@@ -2,16 +2,16 @@ mod graphviz;
 pub mod locals;
 mod source;
 
-use rustc::hir::map::definitions::DefPathData;
-use rustc::ty::layout::Size;
+use crate::rustc::hir::map::definitions::DefPathData;
+use crate::rustc::ty::layout::Size;
 
 use horrorshow::{Raw, Template};
 use rocket::response::content::Html;
 
 use miri::{AllocId, Frame, Pointer};
 
-use step::Breakpoint;
-use PrirodaContext;
+use crate::step::Breakpoint;
+use crate::PrirodaContext;
 
 pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<String> {
     let mut buf = String::new();
@@ -100,7 +100,7 @@ pub fn render_main_window(
         .iter()
         .map(|&Breakpoint(def_id, bb, stmt)| format!("{:?}@{}:{}", def_id, bb.index(), stmt))
         .collect();
-    use rustc_data_structures::indexed_vec::Idx;
+    use crate::rustc_data_structures::indexed_vec::Idx;
     let rendered_locals = frame
         .map(|frame| locals::render_locals(&pcx.ecx, frame))
         .unwrap_or_else(String::new);
@@ -247,7 +247,7 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
 
 pub mod routes {
     use super::*;
-    use *;
+    use crate::*;
 
     pub fn routes() -> Vec<::rocket::Route> {
         routes![index, frame, frame_invalid, ptr, reverse_ptr]

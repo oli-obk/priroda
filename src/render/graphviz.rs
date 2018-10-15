@@ -9,11 +9,11 @@
 // except according to those terms.
 
 use miri::Frame;
-use rustc::mir::*;
+use crate::rustc::mir::*;
 use std::fmt::{self, Debug, Write};
-use step::LocalBreakpoints;
+use crate::step::LocalBreakpoints;
 
-use rustc_data_structures::indexed_vec::Idx;
+use crate::rustc_data_structures::indexed_vec::Idx;
 
 pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
     let mut rendered = String::new();
@@ -24,7 +24,7 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
     }
     let (bb, stmt) = {
         let blck = &frame.mir.basic_blocks()[frame.block];
-        use rustc_data_structures::indexed_vec::Idx;
+        use crate::rustc_data_structures::indexed_vec::Idx;
         (
             frame.block.index() + 1,
             if frame.stmt == blck.statements.len() {
@@ -42,7 +42,7 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
     let edge_colors = {
         let blck = &frame.mir.basic_blocks()[frame.block];
         let (targets, unwind) = if frame.stmt == blck.statements.len() {
-            use rustc::mir::TerminatorKind::*;
+            use crate::rustc::mir::TerminatorKind::*;
             match blck.terminator().kind {
                 Goto { target } => (vec![target], None),
                 SwitchInt { ref targets, .. } => (targets.to_vec(), None),
@@ -185,7 +185,7 @@ fn write_node_label<W: Write>(
             } else {
                 write!(w, "&nbsp; ")?;
             }
-            if ::should_hide_stmt(statement) {
+            if crate::should_hide_stmt(statement) {
                 write!(w, "&lt;+&gt;<br/>")?;
             } else {
                 write!(w, "{}<br/>", escape(statement))?;
