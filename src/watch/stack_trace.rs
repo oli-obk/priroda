@@ -2,10 +2,9 @@ use std::fmt::Write;
 use std::io::{self, Write as IoWrite};
 use std::process::{Command, Stdio};
 
-use miri::ScalarExt;
-use rustc::ty::{Instance, InstanceDef};
+use crate::rustc::ty::{self, Instance, InstanceDef, ParamEnv};
 
-use *;
+use crate::*;
 
 pub(super) fn step_callback(pcx: &mut PrirodaContext) {
     let ecx = &mut pcx.ecx;
@@ -24,7 +23,7 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
         (frame.stmt, blck)
     };
     if stmt == blck.statements.len() {
-        use rustc::mir::TerminatorKind::*;
+        use crate::rustc::mir::TerminatorKind::*;
         if let Call {
             ref func, ref args, ..
         } = blck.terminator().kind
@@ -35,19 +34,19 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
             stack_trace.push((instance,));
             insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);
 
-            let _: ::miri::EvalResult = do catch {
+            let _: ::miri::EvalResult = try {
                 let args = args
                     .into_iter()
-                    .map(|op| ecx.eval_operand(op))
+                    .map(|op| ecx.eval_operand(op, None))
                     .collect::<Result<Vec<_>, _>>()?;
                 match &item_path[..] {
                     "alloc::alloc::::__rust_alloc" | "alloc::alloc::::__rust_alloc_zeroed" => {
-                        let size = ecx.value_to_scalar(args[0])?.to_usize(ecx)?;
+                        let size = ecx.read_scalar(args[0])?.to_usize(ecx.tcx.tcx)?;
                         insert_stack_trace(&mut traces.stack_traces_mem, stack_trace, size as u128);
                     }
                     "alloc::alloc::::__rust_realloc" => {
-                        let old_size = ecx.value_to_scalar(args[1])?.to_usize(ecx)?;
-                        let new_size = ecx.value_to_scalar(args[3])?.to_usize(ecx)?;
+                        let old_size = ecx.read_scalar(args[1])?.to_usize(ecx.tcx.tcx)?;
+                        let new_size = ecx.read_scalar(args[3])?.to_usize(ecx.tcx.tcx)?;
                         if new_size > old_size {
                             insert_stack_trace(
                                 &mut traces.stack_traces_mem,
@@ -65,26 +64,26 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
 
 fn instance_for_call_operand<'a, 'tcx: 'a>(
     ecx: &mut EvalContext<'a, 'tcx>,
-    func: &'tcx ::rustc::mir::Operand,
+    func: &'tcx crate::rustc::mir::Operand,
 ) -> Instance<'tcx> {
-    let res: ::miri::EvalResult<Instance> = do catch {
-        let func = ecx.eval_operand(func)?;
+    let res: ::miri::EvalResult<Instance> = try {
+        let func = ecx.eval_operand(func, None)?;
 
-        match func.ty.sty {
-            ty::TyFnPtr(_) => {
-                let fn_ptr = ecx.value_to_scalar(func)?.to_ptr()?;
+        match func.layout.ty.sty {
+            ty::FnPtr(_) => {
+                let fn_ptr = ecx.read_scalar(func)?.to_ptr()?;
                 ecx.memory.get_fn(fn_ptr)?
             }
-            ty::TyFnDef(def_id, substs) => {
+            ty::FnDef(def_id, substs) => {
                 let substs = ecx.tcx.subst_and_normalize_erasing_regions(
                     ecx.substs(),
-                    ecx.param_env,
+                    ParamEnv::reveal_all(),
                     &substs,
                 );
-                ty::Instance::resolve(*ecx.tcx, ecx.param_env, def_id, substs).unwrap()
+                ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), def_id, substs).unwrap()
             }
             _ => {
-                let msg = format!("can't handle callee of type {:?}", func.ty);
+                let msg = format!("can't handle callee of type {:?}", func.layout.ty);
                 (err!(Unimplemented(msg)) as ::miri::EvalResult<_>)?;
                 unreachable!()
             }
@@ -104,7 +103,7 @@ fn insert_stack_trace<T: Eq>(traces: &mut Vec<(T, u128)>, trace: T, count: u128)
 }
 
 pub(super) fn show(pcx: &PrirodaContext, buf: &mut impl Write) -> io::Result<()> {
-    writeln!(buf, "{}\n", ::render::refresh_script(pcx)).unwrap();
+    writeln!(buf, "{}\n", crate::render::refresh_script(pcx)).unwrap();
     create_flame_graph(
         &pcx.ecx,
         &mut *buf,
@@ -138,7 +137,7 @@ fn create_flame_graph<'a, 'tcx: 'a>(
 ) -> io::Result<()> {
     let mut flame_data = String::new();
     for (stack_trace, count) in traces {
-        let mut last_crate = ::rustc::hir::def_id::LOCAL_CRATE;
+        let mut last_crate = crate::rustc::hir::def_id::LOCAL_CRATE;
         writeln!(
             flame_data,
             "{} {}",
@@ -160,10 +159,12 @@ fn create_flame_graph<'a, 'tcx: 'a>(
                         last_crate = instance.def_id().krate;
                     }
                     name
-                }).collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
                 .join(";"),
             count
-        ).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        )
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     }
 
     //::std::fs::write(format!("./resources/{}.txt", _file_name), flame_data.as_bytes())?;
@@ -223,7 +224,8 @@ fn print_stack_traces<'a, 'tcx: 'a>(
                 "{nil: <indent$}",
                 nil = "",
                 indent = 4 * (stack_trace.len() - 1)
-            ).replace(" ", "&nbsp;")
+            )
+            .replace(" ", "&nbsp;")
         )?;
     }
     writeln!(buf, "</ul>")?;

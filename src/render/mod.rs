@@ -2,16 +2,16 @@ mod graphviz;
 pub mod locals;
 mod source;
 
-use rustc::hir::map::definitions::DefPathData;
-use rustc::ty::layout::Size;
+use crate::rustc::hir::map::definitions::DefPathData;
+use crate::rustc::ty::layout::Size;
 
 use horrorshow::{Raw, Template};
 use rocket::response::content::Html;
 
 use miri::{AllocId, Frame, Pointer};
 
-use step::Breakpoint;
-use PrirodaContext;
+use crate::step::Breakpoint;
+use crate::PrirodaContext;
 
 pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<String> {
     let mut buf = String::new();
@@ -30,7 +30,8 @@ pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<S
                 : t
             }
         }
-    }).write_to_string(&mut buf)
+    })
+    .write_to_string(&mut buf)
     .unwrap();
     Html(buf)
 }
@@ -88,17 +89,17 @@ pub fn render_main_window(
                 } else {
                     instance.to_string()
                 },
-                pcx.ecx.tcx.sess.codemap().span_to_string(span),
+                pcx.ecx.tcx.sess.source_map().span_to_string(span),
                 format!("{:?}", instance.def_id()),
             )
-        }).collect();
+        })
+        .collect();
     let rendered_breakpoints: Vec<String> = pcx
         .config
         .bptree
         .iter()
         .map(|&Breakpoint(def_id, bb, stmt)| format!("{:?}@{}:{}", def_id, bb.index(), stmt))
         .collect();
-    use rustc_data_structures::indexed_vec::Idx;
     let rendered_locals = frame
         .map(|frame| locals::render_locals(&pcx.ecx, frame))
         .unwrap_or_else(String::new);
@@ -182,6 +183,8 @@ pub fn render_main_window(
     )
 }
 
+// TODO Memory::allocations doesn't exist anymore
+/*
 pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
     let allocs: Vec<_> = pcx
         .ecx
@@ -193,7 +196,8 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
                 .values()
                 .find(|reloc| reloc.0 == alloc_id)
                 .map(|_| id)
-        }).collect();
+        })
+        .collect();
     template(
         pcx,
         format!("Allocations with pointers to Allocation {}", alloc_id),
@@ -205,6 +209,7 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
         },
     )
 }
+*/
 
 pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -> Html<String> {
     use horrorshow::Raw;
@@ -213,7 +218,9 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
         Pointer {
             alloc_id,
             offset: Size::from_bytes(offset),
-        }.into(),
+            tag: (),
+        }
+        .into(),
         None,
     ) {
         if bytes * 2 > offset {
@@ -243,10 +250,10 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
 
 pub mod routes {
     use super::*;
-    use *;
+    use crate::*;
 
     pub fn routes() -> Vec<::rocket::Route> {
-        routes![index, frame, frame_invalid, ptr, reverse_ptr]
+        routes![index, frame, frame_invalid, ptr /*, reverse_ptr*/]
     }
 
     view_route!(index: "/", |pcx, flash: Option<rocket::request::FlashMessage>| {
@@ -271,7 +278,10 @@ pub mod routes {
         render::render_ptr_memory(pcx, AllocId(alloc_id), offset)
     });
 
+    // TODO Memory::allocations doesn't exist anymore
+    /*
     view_route!(reverse_ptr: "/reverse_ptr/<ptr>", |pcx, ptr: u64| {
         render::render_reverse_ptr(pcx, ptr)
     });
+    */
 }

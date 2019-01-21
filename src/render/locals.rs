@@ -1,16 +1,18 @@
-use rustc::mir::{self, interpret::EvalErrorKind};
-use rustc::ty::{
-    layout::{Abi, LayoutOf, Size},
-    Ty, TyS, TypeAndMut, TypeVariants,
+use crate::rustc::mir::{self, interpret::EvalErrorKind};
+use crate::rustc::ty::{
+    layout::{Abi, Size},
+    ParamEnv, TyKind, TyS, TypeAndMut,
 };
-use rustc_data_structures::indexed_vec::Idx;
 
-use miri::{Allocation, EvalResult, Frame, Place, PlaceExtra, Pointer, Scalar, ValTy, Value};
+use miri::{
+    Allocation, EvalResult, Frame, LocalValue, OpTy, Operand, Place, Pointer, PointerArithmetic,
+    Scalar, ScalarMaybeUndef, Value,
+};
 
 use horrorshow::prelude::*;
 use horrorshow::Template;
 
-use EvalContext;
+use crate::EvalContext;
 
 pub fn render_locals<'a, 'tcx: 'a>(
     ecx: &EvalContext<'a, 'tcx>,
@@ -25,41 +27,47 @@ pub fn render_locals<'a, 'tcx: 'a>(
     } = frame;
 
     //               name    ty      alloc        val     style
-    let locals: Vec<(String, String, Option<u64>, String, &str)> = locals
-        .iter()
-        .enumerate()
-        .map(|(id, &val)| {
-            let mut val = val;
-            let local_decl = &mir.local_decls[mir::Local::new(id)];
+    let locals: Vec<(String, String, Option<u64>, String, &str)> = mir
+        .local_decls
+        .iter_enumerated()
+        .map(|(id, local_decl)| {
             let name = local_decl
                 .name
                 .map(|n| n.as_str().to_string())
                 .unwrap_or_else(String::new);
             let ty = ecx.monomorphize(local_decl.ty, instance.substs);
-            if id == 0 {
-                val = match *return_place {
-                    Place::Ptr { ptr, align, extra } => {
-                        if extra != PlaceExtra::None {
-                            return (
-                                name,
-                                ty.to_string(),
-                                None,
-                                "&lt;unsupported&gt;".to_owned(),
-                                "color: red;",
-                            );
+
+            let op_ty = if id == mir::RETURN_PLACE {
+                return_place.map(|p| {
+                    ecx.place_to_op(p).unwrap()
+                })
+            } else {
+                match *locals.get(id).unwrap() /* never None, because locals has a entry for every defined local */ {
+                    LocalValue::Dead => None,
+                    LocalValue::Live(op) => {
+                        if ecx.frame() as *const _ == frame as *const _ {
+                            Some(ecx.eval_operand(&mir::Operand::Move(mir::Place::Local(id)), None).unwrap())
+
+                        } else {
+                            None // TODO Above doesn't work for non top frames
                         }
-                        Some(Value::ByRef(ptr, align))
+                        //Some(OpTy { op, layout: ecx.tcx.layout_of(ParamEnv::reveal_all().and(ty)).unwrap() })
                     }
-                    Place::Local { frame, local } => ecx.stack()[frame].get_local(local).ok(),
-                };
-            }
-            let (alloc, val, style) = match val.map(|value| print_value(ecx, ty, value)) {
-                Some(Ok((alloc, text))) => (alloc, text, ""),
-                Some(Err(())) => (None, "&lt;error&gt;".to_owned(), "color: red;"),
+                }
+            };
+
+            let (alloc, val, style) = match op_ty {
                 None => (None, "&lt;uninit&gt;".to_owned(), "font-size: 0;"),
+                Some(op_ty) => {
+                    match print_operand(ecx, op_ty) {
+                        Ok((alloc, text)) => (alloc, text, ""),
+                        Err(()) => (None, "&lt;error&gt;".to_owned(), "color: red;"),
+                    }
+                }
             };
             (name, ty.to_string(), alloc, val, style)
-        }).collect();
+        })
+        .collect();
 
     let (arg_count, var_count, tmp_count) = (
         mir.args_iter().count(),
@@ -104,71 +112,77 @@ pub fn render_locals<'a, 'tcx: 'a>(
         .unwrap()
 }
 
-fn print_primval(val: Scalar) -> String {
+fn print_scalar_maybe_undef(val: ScalarMaybeUndef) -> String {
     match val {
-        Scalar::Bits { defined: 0, .. } => "&lt;undef &gt;".to_string(),
+        ScalarMaybeUndef::Undef => "&lt;undef &gt;".to_string(),
+        ScalarMaybeUndef::Scalar(val) => print_scalar(val),
+    }
+}
+
+fn print_scalar(val: Scalar) -> String {
+    match val {
         Scalar::Ptr(ptr) => format!(
             "<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>",
             alloc = ptr.alloc_id.0,
             offset = ptr.offset.bytes()
         ),
-        Scalar::Bits { bits, defined } => {
-            format!("0x{:0width$X}", bits, width = (defined as usize) / 8)
+        Scalar::Bits { bits, size } => {
+            if size == 0 {
+                "&lt;zst&gt;".to_string()
+            } else {
+                format!("0x{:0width$X}", bits, width = (size as usize) / 8)
+            }
         }
     }
 }
 
-fn pp_value<'a, 'tcx: 'a>(
+fn pp_operand<'a, 'tcx: 'a>(
     ecx: &EvalContext<'a, 'tcx>,
-    ty: Ty<'tcx>,
-    val: Value,
+    op_ty: OpTy<'tcx>,
 ) -> EvalResult<'tcx, String> {
-    let layout = ecx.layout_of(ty).map_err(|_| {
-        EvalErrorKind::AssumptionNotHeld // Don't pretty print dst's
-    })?;
-    match ty.sty {
-        TypeVariants::TyRawPtr(TypeAndMut {
+    match op_ty.layout.ty.sty {
+        TyKind::RawPtr(TypeAndMut {
             ty: &TyS {
-                sty: TypeVariants::TyStr,
-                ..
+                sty: TyKind::Str, ..
             },
             ..
         })
-        | TypeVariants::TyRef(
+        | TyKind::Ref(
             _,
             &TyS {
-                sty: TypeVariants::TyStr,
-                ..
+                sty: TyKind::Str, ..
             },
             _,
         ) => {
-            if let Value::ScalarPair(Scalar::Ptr(ptr), Scalar::Bits { bits: len, .. }) = val {
-                if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
-                    let offset = ptr.offset.bytes();
-                    if (offset as u128) < allocation.bytes.len() as u128 {
-                        let alloc_bytes =
-                            &allocation.bytes[offset as usize
-                                                  ..(offset as usize)
-                                                      .checked_add(len as usize)
-                                                      .ok_or(EvalErrorKind::AssumptionNotHeld)?];
-                        let s = String::from_utf8_lossy(alloc_bytes);
-                        return Ok(format!("\"{}\"", s));
+            if let Operand::Immediate(val) = *op_ty {
+                if let Value::ScalarPair(
+                    ScalarMaybeUndef::Scalar(Scalar::Ptr(ptr)),
+                    ScalarMaybeUndef::Scalar(Scalar::Bits { bits: len, .. }),
+                ) = val
+                {
+                    if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
+                        let offset = ptr.offset.bytes();
+                        if (offset as u128) < allocation.bytes.len() as u128 {
+                            let alloc_bytes = &allocation.bytes[offset as usize
+                                ..(offset as usize)
+                                    .checked_add(len as usize)
+                                    .ok_or(EvalErrorKind::AssumptionNotHeld)?];
+                            let s = String::from_utf8_lossy(alloc_bytes);
+                            return Ok(format!("\"{}\"", s));
+                        }
                     }
                 }
             }
         }
-        TypeVariants::TyAdt(adt_def, _substs) => {
-            if let Value::Scalar(Scalar::Bits { defined: 0, .. }) = val {
+        TyKind::Adt(adt_def, _substs) => {
+            if let Operand::Immediate(Value::Scalar(ScalarMaybeUndef::Undef)) = *op_ty {
                 Err(EvalErrorKind::AssumptionNotHeld)?;
             }
 
             let variant = if adt_def.variants.len() == 1 {
                 0
-            } else if let Value::ByRef(ptr, align) = val {
-                let ptr = ptr.to_ptr()?;
-                ecx.read_discriminant_as_variant_index(Place::from_ptr(ptr, align), layout)?
             } else {
-                Err(EvalErrorKind::AssumptionNotHeld)?
+                ecx.read_discriminant(op_ty)?.1
             };
 
             let adt_fields = &adt_def.variants[variant].fields;
@@ -194,10 +208,9 @@ fn pp_value<'a, 'tcx: 'a>(
             }
 
             for (i, adt_field) in adt_fields.iter().enumerate() {
-                let field_pretty: EvalResult<String> = do catch {
-                    let (field_val, field_layout) =
-                        ecx.read_field(val, None, ::rustc::mir::Field::new(i), layout)?;
-                    pp_value(ecx, field_layout.ty, field_val)?
+                let field_pretty: EvalResult<String> = try {
+                    let field_op_ty = ecx.operand_field(op_ty, i as u64)?;
+                    pp_operand(ecx, field_op_ty)?
                 };
 
                 pretty.push_str(&format!(
@@ -224,20 +237,20 @@ fn pp_value<'a, 'tcx: 'a>(
         _ => {}
     }
 
-    if layout.size.bytes() == 0 {
+    if op_ty.layout.size.bytes() == 0 {
         Err(EvalErrorKind::AssumptionNotHeld)?;
     }
-    if let Abi::Scalar(_) = layout.abi {
+    if let Abi::Scalar(_) = op_ty.layout.abi {
     } else {
         Err(EvalErrorKind::AssumptionNotHeld)?;
     }
-    let scalar = ecx.value_to_scalar(ValTy { value: val, ty })?;
-    if let Scalar::Ptr(_) = &scalar {
-        return Ok(print_primval(scalar)); // If the value is a ptr, print it
+    let scalar = ecx.read_scalar(op_ty)?;
+    if let ScalarMaybeUndef::Scalar(Scalar::Ptr(_)) = &scalar {
+        return Ok(print_scalar_maybe_undef(scalar)); // If the value is a ptr, print it
     }
-    let bits = scalar.to_bits(layout.size)?;
-    match ty.sty {
-        TypeVariants::TyBool => {
+    let bits = scalar.to_bits(op_ty.layout.size)?;
+    match op_ty.layout.ty.sty {
+        TyKind::Bool => {
             if bits == 0 {
                 Ok("false".to_string())
             } else if bits == 1 {
@@ -246,7 +259,7 @@ fn pp_value<'a, 'tcx: 'a>(
                 Err(EvalErrorKind::AssumptionNotHeld.into())
             }
         }
-        TypeVariants::TyChar if bits < ::std::char::MAX as u128 => {
+        TyKind::Char if bits < ::std::char::MAX as u128 => {
             let chr = ::std::char::from_u32(bits as u32).unwrap();
             if chr.is_ascii() {
                 Ok(format!("'{}'", chr))
@@ -254,13 +267,13 @@ fn pp_value<'a, 'tcx: 'a>(
                 Err(EvalErrorKind::AssumptionNotHeld.into())
             }
         }
-        TypeVariants::TyUint(_) => Ok(format!("{0}", bits)),
-        TypeVariants::TyInt(_) => Ok(format!(
+        TyKind::Uint(_) => Ok(format!("{0}", bits)),
+        TyKind::Int(_) => Ok(format!(
             "{0}",
-            ::miri::sign_extend(ecx.tcx.tcx, bits, ty).unwrap() as i128
+            ::miri::sign_extend(bits, op_ty.layout.size) as i128
         )),
-        TypeVariants::TyFloat(float_ty) => {
-            use syntax::ast::FloatTy::*;
+        TyKind::Float(float_ty) => {
+            use crate::syntax::ast::FloatTy::*;
             match float_ty {
                 F32 if bits < ::std::u32::MAX as u128 => {
                     Ok(format!("{}", <f32>::from_bits(bits as u32)))
@@ -275,23 +288,31 @@ fn pp_value<'a, 'tcx: 'a>(
     }
 }
 
-pub fn print_value<'a, 'tcx: 'a>(
+pub fn print_operand<'a, 'tcx: 'a>(
     ecx: &EvalContext<'a, 'tcx>,
-    ty: Ty<'tcx>,
-    val: Value,
+    op_ty: OpTy<'tcx>,
 ) -> Result<(Option<u64>, String), ()> {
-    let pretty = pp_value(ecx, ty, val);
+    let pretty = pp_operand(ecx, op_ty);
 
-    let (alloc, txt) = match val {
-        Value::ByRef(ptr, _align) => {
-            let size: Option<u64> = ecx.layout_of(ty).ok().map(|l| l.size.bytes());
-            let (alloc, txt, _len) = print_ptr(ecx, ptr, size)?;
-            (alloc, txt)
+    let (alloc, txt) = match *op_ty {
+        Operand::Indirect(place) => {
+            let size: u64 = op_ty.layout.size.bytes();
+            if place.meta.is_none() {
+                let ptr = place.to_scalar_ptr_align().0;
+                let (alloc, txt, _len) = print_ptr(ecx, ptr, Some(size))?;
+                (alloc, txt)
+            } else {
+                (None, format!("{:?}", place)) // FIXME better printing for unsized locals
+            }
         }
-        Value::Scalar(primval) => (None, print_primval(primval)),
-        Value::ScalarPair(val, extra) => (
+        Operand::Immediate(Value::Scalar(scalar)) => (None, print_scalar_maybe_undef(scalar)),
+        Operand::Immediate(Value::ScalarPair(val, extra)) => (
             None,
-            format!("{}, {}", print_primval(val), print_primval(extra)),
+            format!(
+                "{}, {}",
+                print_scalar_maybe_undef(val),
+                print_scalar_maybe_undef(extra)
+            ),
         ),
     };
     let txt = if let Ok(pretty) = pretty {
@@ -330,7 +351,7 @@ pub fn print_alloc(ptr_size: u64, ptr: Pointer, alloc: &Allocation, size: Option
     let mut s = String::new();
     let mut i = ptr.offset.bytes();
     while i < end {
-        if let Some(&reloc) = alloc.relocations.get(&Size::from_bytes(i)) {
+        if let Some((_tag, reloc)) = alloc.relocations.get(&Size::from_bytes(i)) {
             i += ptr_size;
             write!(&mut s,
                 "<a style=\"text-decoration: none\" href=\"/ptr/{alloc}/{offset}\">┠{nil:─<wdt$}┨</a>",
@@ -343,6 +364,7 @@ pub fn print_alloc(ptr_size: u64, ptr: Pointer, alloc: &Allocation, size: Option
             if alloc
                 .undef_mask
                 .is_range_defined(Size::from_bytes(i), Size::from_bytes(i + 1))
+                .is_ok()
             {
                 write!(&mut s, "{:02x}", alloc.bytes[i as usize] as usize).unwrap();
             } else {

@@ -1,6 +1,5 @@
-#![feature(rustc_private, decl_macro, plugin, fnbox, catch_expr)]
+#![feature(rustc_private, decl_macro, plugin, fnbox, try_blocks)]
 #![allow(unused_attributes)]
-#![cfg_attr(feature = "cargo-clippy", allow(cast_lossless))]
 #![recursion_limit = "5000"]
 #![plugin(rocket_codegen)]
 
@@ -42,9 +41,9 @@ use std::boxed::FnBox;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use rustc::mir;
-use rustc::ty::{self, TyCtxt};
-use rustc_driver::driver;
+use crate::rustc::mir;
+use crate::rustc::ty::TyCtxt;
+use crate::rustc_driver::driver;
 
 use promising_future::future_promise;
 use rocket::response::content::*;
@@ -54,10 +53,10 @@ use rocket::State;
 
 use miri::AllocId;
 
-use step::BreakpointTree;
+use crate::step::BreakpointTree;
 
 fn should_hide_stmt(stmt: &mir::Statement) -> bool {
-    use rustc::mir::StatementKind::*;
+    use crate::rustc::mir::StatementKind::*;
     match stmt.kind {
         StorageLive(_) | StorageDead(_) | Validate(_, _) | EndRegion(_) | Nop => true,
         _ => false,
@@ -75,7 +74,7 @@ pub struct PrirodaContext<'a, 'tcx: 'a> {
 
 impl<'a, 'tcx: 'a> PrirodaContext<'a, 'tcx> {
     fn restart(&mut self) {
-        self.ecx = ::create_ecx(self.ecx.tcx.tcx);
+        self.ecx = create_ecx(self.ecx.tcx.tcx);
         *self.step_count = 0;
         self.traces.clear(); // Cleanup all traces
     }
@@ -120,7 +119,7 @@ fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx
         .expect("no main or start function found");
     let main_id = tcx.hir.local_def_id(node_id);
 
-    miri::create_ecx(tcx, main_id, None).unwrap().0
+    miri::create_ecx(tcx, main_id, None, false).unwrap()
 }
 
 pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>);
@@ -153,7 +152,7 @@ impl PrirodaSender {
 
 macro action_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
     #[get($route)]
-    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Flash<Redirect>> {
+    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> crate::RResult<Flash<Redirect>> {
         sender.do_work(move |$pcx| {
             Flash::success(Redirect::to("/"), (||$body)())
         })
@@ -162,7 +161,7 @@ macro action_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_t
 
 macro view_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
     #[get($route)]
-    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> ::RResult<Html<String>> {
+    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> crate::RResult<Html<String>> {
         sender.do_work(move |pcx| {
             let $pcx = &*pcx;
             (||$body)()
@@ -234,7 +233,8 @@ fn server(sender: PrirodaSender) {
                     println!("open {} in your browser", addr);
                 }
             }
-        })).launch();
+        }))
+        .launch();
 }
 
 // Copied from miri/bin/miri.rs
@@ -286,39 +286,43 @@ fn main() {
             let args = args.clone();
             // Ignore result to restart in case of a crash
             let _ = std::thread::spawn(move || {
-                let mut control = driver::CompileController::basic();
+                let _ = rustc_driver::run(move || {
+                    let mut control = driver::CompileController::basic();
 
-                control.after_analysis.callback = Box::new(move |state| {
-                    state.session.abort_if_errors();
-                    let mut step_count = step_count.lock().unwrap_or_else(|err| err.into_inner());
-                    let mut config = config.lock().unwrap_or_else(|err| err.into_inner());
+                    control.after_analysis.callback = Box::new(move |state| {
+                        state.session.abort_if_errors();
+                        let mut step_count =
+                            step_count.lock().unwrap_or_else(|err| err.into_inner());
+                        let mut config = config.lock().unwrap_or_else(|err| err.into_inner());
 
-                    let mut pcx = PrirodaContext {
-                        ecx: create_ecx(state.tcx.unwrap()),
-                        step_count: &mut *step_count,
-                        traces: watch::Traces::new(),
-                        config: &mut *config,
-                    };
+                        let mut pcx = PrirodaContext {
+                            ecx: create_ecx(state.tcx.unwrap()),
+                            step_count: &mut *step_count,
+                            traces: watch::Traces::new(),
+                            config: &mut *config,
+                        };
 
-                    // Step to the position where miri crashed if it crashed
-                    for _ in 0..*pcx.step_count {
-                        match pcx.ecx.step() {
-                            Ok(true) => {}
-                            res => panic!("Miri is not deterministic causing error {:?}", res),
+                        // Step to the position where miri crashed if it crashed
+                        for _ in 0..*pcx.step_count {
+                            match pcx.ecx.step() {
+                                Ok(true) => {}
+                                res => panic!("Miri is not deterministic causing error {:?}", res),
+                            }
                         }
-                    }
 
-                    // Just ignore poisoning by panicking
-                    let receiver = receiver.lock().unwrap_or_else(|err| err.into_inner());
+                        // Just ignore poisoning by panicking
+                        let receiver = receiver.lock().unwrap_or_else(|err| err.into_inner());
 
-                    // process commands
-                    for command in receiver.iter() {
-                        command.call_box((&mut pcx,));
-                    }
+                        // process commands
+                        for command in receiver.iter() {
+                            command.call_box((&mut pcx,));
+                        }
+                    });
+
+                    rustc_driver::run_compiler(&*args, Box::new(control), None, None)
                 });
-
-                rustc_driver::run_compiler(&*args, Box::new(control), None, None);
-            }).join();
+            })
+            .join();
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
         println!("\n============== Miri crashed too often. Aborting ==============\n");

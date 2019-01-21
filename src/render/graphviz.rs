@@ -8,12 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use crate::rustc::mir::*;
+use crate::step::LocalBreakpoints;
 use miri::Frame;
-use rustc::mir::*;
 use std::fmt::{self, Debug, Write};
-use step::LocalBreakpoints;
-
-use rustc_data_structures::indexed_vec::Idx;
 
 pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
     let mut rendered = String::new();
@@ -24,7 +22,6 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
     }
     let (bb, stmt) = {
         let blck = &frame.mir.basic_blocks()[frame.block];
-        use rustc_data_structures::indexed_vec::Idx;
         (
             frame.block.index() + 1,
             if frame.stmt == blck.statements.len() {
@@ -42,7 +39,7 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
     let edge_colors = {
         let blck = &frame.mir.basic_blocks()[frame.block];
         let (targets, unwind) = if frame.stmt == blck.statements.len() {
-            use rustc::mir::TerminatorKind::*;
+            use crate::rustc::mir::TerminatorKind::*;
             match blck.terminator().kind {
                 Goto { target } => (vec![target], None),
                 SwitchInt { ref targets, .. } => (targets.to_vec(), None),
@@ -74,12 +71,14 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
                     unwind
                         .into_iter()
                         .map(|target| (frame.block, target, "red"))
-                ).map(|(from, to, color)| format!(
+                )
+                .map(|(from, to, color)| format!(
                     "'bb{}->bb{}':'{}'",
                     from.index(),
                     to.index(),
                     color
-                )).collect::<Vec<_>>()
+                ))
+                .collect::<Vec<_>>()
                 .join(",")
         )
     };
@@ -113,7 +112,8 @@ pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
             bb,
             stmt,
             edge_colors = edge_colors
-        )).unwrap();
+        ))
+        .unwrap();
     rendered
 }
 
@@ -182,7 +182,7 @@ fn write_node_label<W: Write>(
             } else {
                 write!(w, "&nbsp; ")?;
             }
-            if ::should_hide_stmt(statement) {
+            if crate::should_hide_stmt(statement) {
                 write!(w, "&lt;+&gt;<br/>")?;
             } else {
                 write!(w, "{}<br/>", escape(statement))?;
