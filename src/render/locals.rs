@@ -1,12 +1,12 @@
 use crate::rustc::mir::{self, interpret::EvalErrorKind};
 use crate::rustc::ty::{
     layout::{Abi, Size},
-    ParamEnv, TyKind, TyS, TypeAndMut,
+    TyKind, TyS, TypeAndMut,
 };
 
 use miri::{
-    Allocation, EvalResult, Frame, LocalValue, OpTy, Operand, Place, Pointer, PointerArithmetic,
-    Scalar, ScalarMaybeUndef, Value,
+    Allocation, EvalResult, Frame, OpTy, Operand, Pointer,
+    Scalar, ScalarMaybeUndef, Stacks, Borrow, Immediate,
 };
 
 use horrorshow::prelude::*;
@@ -16,11 +16,9 @@ use crate::EvalContext;
 
 pub fn render_locals<'a, 'tcx: 'a>(
     ecx: &EvalContext<'a, 'tcx>,
-    frame: &Frame<'tcx, 'tcx>,
+    frame: &Frame<'tcx, 'tcx, Borrow, u64>,
 ) -> String {
     let &Frame {
-        instance,
-        ref locals,
         ref mir,
         ref return_place,
         ..
@@ -35,25 +33,13 @@ pub fn render_locals<'a, 'tcx: 'a>(
                 .name
                 .map(|n| n.as_str().to_string())
                 .unwrap_or_else(String::new);
-            let ty = ecx.monomorphize(local_decl.ty, instance.substs);
 
             let op_ty = if id == mir::RETURN_PLACE {
                 return_place.map(|p| {
                     ecx.place_to_op(p).unwrap()
                 })
             } else {
-                match *locals.get(id).unwrap() /* never None, because locals has a entry for every defined local */ {
-                    LocalValue::Dead => None,
-                    LocalValue::Live(op) => {
-                        if ecx.frame() as *const _ == frame as *const _ {
-                            Some(ecx.eval_operand(&mir::Operand::Move(mir::Place::Local(id)), None).unwrap())
-
-                        } else {
-                            None // TODO Above doesn't work for non top frames
-                        }
-                        //Some(OpTy { op, layout: ecx.tcx.layout_of(ParamEnv::reveal_all().and(ty)).unwrap() })
-                    }
-                }
+                ecx.access_local(frame, id, None).ok()
             };
 
             let (alloc, val, style) = match op_ty {
@@ -65,7 +51,7 @@ pub fn render_locals<'a, 'tcx: 'a>(
                     }
                 }
             };
-            (name, ty.to_string(), alloc, val, style)
+            (name, local_decl.ty.to_string(), alloc, val, style)
         })
         .collect();
 
@@ -112,14 +98,14 @@ pub fn render_locals<'a, 'tcx: 'a>(
         .unwrap()
 }
 
-fn print_scalar_maybe_undef(val: ScalarMaybeUndef) -> String {
+fn print_scalar_maybe_undef(val: ScalarMaybeUndef<miri::Borrow>) -> String {
     match val {
         ScalarMaybeUndef::Undef => "&lt;undef &gt;".to_string(),
         ScalarMaybeUndef::Scalar(val) => print_scalar(val),
     }
 }
 
-fn print_scalar(val: Scalar) -> String {
+fn print_scalar(val: Scalar<miri::Borrow>) -> String {
     match val {
         Scalar::Ptr(ptr) => format!(
             "<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>",
@@ -138,7 +124,7 @@ fn print_scalar(val: Scalar) -> String {
 
 fn pp_operand<'a, 'tcx: 'a>(
     ecx: &EvalContext<'a, 'tcx>,
-    op_ty: OpTy<'tcx>,
+    op_ty: OpTy<'tcx, miri::Borrow>,
 ) -> EvalResult<'tcx, String> {
     match op_ty.layout.ty.sty {
         TyKind::RawPtr(TypeAndMut {
@@ -155,12 +141,12 @@ fn pp_operand<'a, 'tcx: 'a>(
             _,
         ) => {
             if let Operand::Immediate(val) = *op_ty {
-                if let Value::ScalarPair(
+                if let Immediate::ScalarPair(
                     ScalarMaybeUndef::Scalar(Scalar::Ptr(ptr)),
                     ScalarMaybeUndef::Scalar(Scalar::Bits { bits: len, .. }),
                 ) = val
                 {
-                    if let Ok(allocation) = ecx.memory.get(ptr.alloc_id) {
+                    if let Ok(allocation) = ecx.memory().get(ptr.alloc_id) {
                         let offset = ptr.offset.bytes();
                         if (offset as u128) < allocation.bytes.len() as u128 {
                             let alloc_bytes = &allocation.bytes[offset as usize
@@ -175,16 +161,11 @@ fn pp_operand<'a, 'tcx: 'a>(
             }
         }
         TyKind::Adt(adt_def, _substs) => {
-            if let Operand::Immediate(Value::Scalar(ScalarMaybeUndef::Undef)) = *op_ty {
+            if let Operand::Immediate(Immediate::Scalar(ScalarMaybeUndef::Undef)) = *op_ty {
                 Err(EvalErrorKind::AssumptionNotHeld)?;
             }
 
-            let variant = if adt_def.variants.len() == 1 {
-                0
-            } else {
-                ecx.read_discriminant(op_ty)?.1
-            };
-
+            let variant = ecx.read_discriminant(op_ty)?.1;
             let adt_fields = &adt_def.variants[variant].fields;
 
             let should_collapse = adt_fields.len() > 1;
@@ -199,7 +180,7 @@ fn pp_operand<'a, 'tcx: 'a>(
 
             if adt_def.is_enum() {
                 pretty.push_str("::");
-                pretty.push_str(&*adt_def.variants[variant].name.as_str());
+                pretty.push_str(&*adt_def.variants[variant].ident.as_str());
             }
             pretty.push_str(" { ");
 
@@ -290,7 +271,7 @@ fn pp_operand<'a, 'tcx: 'a>(
 
 pub fn print_operand<'a, 'tcx: 'a>(
     ecx: &EvalContext<'a, 'tcx>,
-    op_ty: OpTy<'tcx>,
+    op_ty: OpTy<'tcx, miri::Borrow>,
 ) -> Result<(Option<u64>, String), ()> {
     let pretty = pp_operand(ecx, op_ty);
 
@@ -305,8 +286,8 @@ pub fn print_operand<'a, 'tcx: 'a>(
                 (None, format!("{:?}", place)) // FIXME better printing for unsized locals
             }
         }
-        Operand::Immediate(Value::Scalar(scalar)) => (None, print_scalar_maybe_undef(scalar)),
-        Operand::Immediate(Value::ScalarPair(val, extra)) => (
+        Operand::Immediate(Immediate::Scalar(scalar)) => (None, print_scalar_maybe_undef(scalar)),
+        Operand::Immediate(Immediate::ScalarPair(val, extra)) => (
             None,
             format!(
                 "{}, {}",
@@ -325,13 +306,13 @@ pub fn print_operand<'a, 'tcx: 'a>(
 
 pub fn print_ptr(
     ecx: &EvalContext,
-    ptr: Scalar,
+    ptr: Scalar<Borrow>,
     size: Option<u64>,
 ) -> Result<(Option<u64>, String, u64), ()> {
     let ptr = ptr.to_ptr().map_err(|_| ())?;
     match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr)) {
         (Ok(alloc), Err(_)) => {
-            let s = print_alloc(ecx.memory().pointer_size().bytes(), ptr, alloc, size);
+            let s = print_alloc(ecx.tcx.data_layout.pointer_size.bytes(), ptr, alloc, size);
             Ok((Some(ptr.alloc_id.0), s, alloc.bytes.len() as u64))
         }
         (Err(_), Ok(_)) => {
@@ -343,7 +324,7 @@ pub fn print_ptr(
     }
 }
 
-pub fn print_alloc(ptr_size: u64, ptr: Pointer, alloc: &Allocation, size: Option<u64>) -> String {
+pub fn print_alloc(ptr_size: u64, ptr: Pointer<Borrow>, alloc: &Allocation<Borrow, Stacks>, size: Option<u64>) -> String {
     use std::fmt::Write;
     let end = size
         .map(|s| s + ptr.offset.bytes())
@@ -355,7 +336,7 @@ pub fn print_alloc(ptr_size: u64, ptr: Pointer, alloc: &Allocation, size: Option
             i += ptr_size;
             write!(&mut s,
                 "<a style=\"text-decoration: none\" href=\"/ptr/{alloc}/{offset}\">┠{nil:─<wdt$}┨</a>",
-                alloc = reloc.0,
+                alloc = reloc,
                 offset = ptr.offset.bytes(),
                 nil = "",
                 wdt = (ptr_size * 2 - 2) as usize,

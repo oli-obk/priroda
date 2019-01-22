@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::rustc::ty::TyCtxt;
 use crate::syntax::source_map::Span;
-use miri::Frame;
+use miri::{Frame, Borrow};
 
 use horrorshow::prelude::*;
 use syntect::easy::HighlightLines;
@@ -17,8 +17,7 @@ thread_local! {
     // Loading the syntax every time is very heavy and causes noticable slowdown
     // This is a thread local as a `SyntaxDefinition` is neither `Send` nor `Sync`
     static RUST_SYNTAX: SyntaxDefinition = {
-        let ps = SyntaxSet::load_defaults_nonewlines();
-        ps.find_syntax_by_extension("rs").unwrap().to_owned()
+        SyntaxSet::load_defaults_nonewlines().find_syntax_by_extension("rs").unwrap().to_owned()
     };
 
     static THEME_SET: ThemeSet = {
@@ -71,7 +70,7 @@ fn split<'s, A: Clone>(
     (before, after)
 }
 
-pub fn render_source(tcx: TyCtxt, frame: Option<&Frame>) -> Box<RenderBox + Send> {
+pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Borrow, u64>>) -> Box<RenderBox + Send> {
     let before_time = ::std::time::Instant::now();
 
     if frame.is_none() {

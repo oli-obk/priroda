@@ -189,7 +189,7 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
     let allocs: Vec<_> = pcx
         .ecx
         .memory()
-        .allocations()
+        .alloc_map().values()
         .filter_map(|(id, alloc)| {
             alloc
                 .relocations
@@ -215,12 +215,7 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
     use horrorshow::Raw;
     let (mem, offset, rest) = if let Ok((_, mem, bytes)) = locals::print_ptr(
         &pcx.ecx,
-        Pointer {
-            alloc_id,
-            offset: Size::from_bytes(offset),
-            tag: (),
-        }
-        .into(),
+        Pointer::new(alloc_id, Size::from_bytes(offset)).with_default_tag().into(),
         None,
     ) {
         if bytes * 2 > offset {
@@ -248,6 +243,17 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
     )
 }
 
+pub struct FlashString(String);
+
+impl<'a, 'r> ::rocket::request::FromRequest<'a, 'r> for FlashString {
+    type Error = !;
+    fn from_request(request: &'a rocket::Request<'r>) -> rocket::request::Outcome<Self, !> {
+        rocket::Outcome::Success(FlashString(Option::<rocket::request::FlashMessage>::from_request(request)?
+            .map(|flash| flash.msg().to_string())
+            .unwrap_or_else(String::new)))
+    }
+}
+
 pub mod routes {
     use super::*;
     use crate::*;
@@ -256,14 +262,12 @@ pub mod routes {
         routes![index, frame, frame_invalid, ptr /*, reverse_ptr*/]
     }
 
-    view_route!(index: "/", |pcx, flash: Option<rocket::request::FlashMessage>| {
-        let flash = flash.map(|flash| flash.msg().to_string()).unwrap_or_else(String::new);
-        render::render_main_window(pcx, None, flash)
+    view_route!(index: "/", |pcx, flash: FlashString| {
+        render::render_main_window(pcx, None, flash.0)
     });
 
-    view_route!(frame: "/frame/<frame>", |pcx, flash: Option<rocket::request::FlashMessage>, frame: usize| {
-        let flash = flash.map(|flash| flash.msg().to_string()).unwrap_or_else(String::new);
-        render::render_main_window(pcx, Some(frame), flash)
+    view_route!(frame: "/frame/<frame>", |pcx, flash: FlashString, frame: usize| {
+        render::render_main_window(pcx, Some(frame), flash.0)
     });
 
     #[get("/frame/<frame>", rank = 42)] // Error handler

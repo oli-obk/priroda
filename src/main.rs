@@ -1,7 +1,7 @@
-#![feature(rustc_private, decl_macro, plugin, fnbox, try_blocks)]
+#![feature(rustc_private, decl_macro, plugin, fnbox, try_blocks, proc_macro_hygiene)]
+#![feature(never_type)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
-#![plugin(rocket_codegen)]
 
 extern crate syntax;
 #[macro_use(err)]
@@ -10,11 +10,11 @@ extern crate rustc_data_structures;
 extern crate rustc_driver;
 
 extern crate regex;
-#[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate rental;
 extern crate miri;
+#[macro_use]
 extern crate rocket;
 
 extern crate env_logger;
@@ -44,11 +44,12 @@ use std::sync::{Arc, Mutex};
 use crate::rustc::mir;
 use crate::rustc::ty::TyCtxt;
 use crate::rustc_driver::driver;
+use crate::rustc::hir::def_id::LOCAL_CRATE;
 
 use promising_future::future_promise;
 use rocket::response::content::*;
 use rocket::response::status::BadRequest;
-use rocket::response::{Flash, NamedFile, Redirect};
+use rocket::response::NamedFile;
 use rocket::State;
 
 use miri::AllocId;
@@ -58,7 +59,7 @@ use crate::step::BreakpointTree;
 fn should_hide_stmt(stmt: &mir::Statement) -> bool {
     use crate::rustc::mir::StatementKind::*;
     match stmt.kind {
-        StorageLive(_) | StorageDead(_) | Validate(_, _) | EndRegion(_) | Nop => true,
+        StorageLive(_) | StorageDead(_) | Nop => true,
         _ => false,
     }
 }
@@ -112,14 +113,11 @@ impl Default for Config {
 type RResult<T> = Result<T, Html<String>>;
 
 fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
-    let (node_id, _, _) = tcx
-        .sess
-        .entry_fn
-        .borrow()
+    let (main_id, _) = tcx
+        .entry_fn(LOCAL_CRATE)
         .expect("no main or start function found");
-    let main_id = tcx.hir.local_def_id(node_id);
 
-    miri::create_ecx(tcx, main_id, None, false).unwrap()
+    miri::create_ecx(tcx, main_id, false).unwrap()
 }
 
 pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>);
@@ -152,16 +150,22 @@ impl PrirodaSender {
 
 macro action_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
     #[get($route)]
-    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> crate::RResult<Flash<Redirect>> {
+    pub fn $name(
+        sender: rocket::State<crate::PrirodaSender>
+        $(,$arg:$arg_ty)*
+    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |$pcx| {
-            Flash::success(Redirect::to("/"), (||$body)())
+            rocket::response::Flash::success(rocket::response::Redirect::to("/"), (||$body)())
         })
     }
 }
 
 macro view_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
     #[get($route)]
-    pub fn $name(sender: State<PrirodaSender> $(,$arg:$arg_ty)*) -> crate::RResult<Html<String>> {
+    pub fn $name(
+        sender: rocket::State<crate::PrirodaSender>
+        $(,$arg:$arg_ty)*
+    ) -> crate::RResult<Html<String>> {
         sender.do_work(move |pcx| {
             let $pcx = &*pcx;
             (||$body)()
@@ -225,7 +229,7 @@ fn server(sender: PrirodaSender) {
         .mount("breakpoints", step::bp_routes::routes())
         .mount("step", step::step_routes::routes())
         .mount("watch", watch::routes())
-        .attach(rocket::fairing::AdHoc::on_launch(|rocket| {
+        .attach(rocket::fairing::AdHoc::on_launch("Priroda, because code has no privacy rights", |rocket| {
             let config = rocket.config();
             if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {
                 let addr = format!("http://{}:{}", config.address, config.port);

@@ -56,8 +56,32 @@ impl AllocTrace {
 
 #[derive(Debug)]
 enum AllocTracePoint {
-    Changed(Allocation),
+    Changed(Allocation<miri::Borrow, miri::Stacks>),
     Deallocated,
+}
+
+fn eq_alloc(a: &Allocation<miri::Borrow, miri::Stacks>, b: &Allocation<miri::Borrow, miri::Stacks>) -> bool {
+    let Allocation {
+        bytes: a_bytes,
+        relocations: a_relocs,
+        undef_mask: a_undef,
+        align: a_align,
+        mutability: a_mut,
+        extra: _,
+    } = a;
+    let Allocation {
+        bytes: b_bytes,
+        relocations: b_relocs,
+        undef_mask: b_undef,
+        align: b_align,
+        mutability: b_mut,
+        extra: _,
+    } = b;
+    a_bytes == b_bytes &&
+    a_relocs == b_relocs &&
+    a_undef == b_undef &&
+    a_align == b_align &&
+    a_mut == b_mut
 }
 
 pub fn step_callback(pcx: &mut PrirodaContext) {
@@ -67,11 +91,11 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
 
         // Collect alloc traces
         for (alloc_id, alloc_trace) in &mut traces.alloc_traces {
-            if let Ok(alloc) = ecx.memory.get(*alloc_id) {
+            if let Ok(alloc) = ecx.memory().get(*alloc_id) {
                 if let Some(&(prev_step_count, AllocTracePoint::Changed(ref prev_alloc))) =
                     alloc_trace.trace_points.last()
                 {
-                    if alloc == prev_alloc || *pcx.step_count == prev_step_count {
+                    if eq_alloc(alloc, prev_alloc) || *pcx.step_count == prev_step_count {
                         continue;
                     }
                 }
@@ -84,6 +108,7 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
                         undef_mask: alloc.undef_mask.clone(),
                         align: alloc.align,
                         mutability: alloc.mutability,
+                        extra: alloc.extra.clone(),
                     }),
                 ));
             } else if let Some(&(_, AllocTracePoint::Deallocated)) = alloc_trace.trace_points.last()
@@ -123,7 +148,7 @@ view_route!(show: "/show", |pcx| {
                 AllocTracePoint::Changed(alloc) => {
                     crate::render::locals::print_alloc(
                         pcx.ecx.memory().pointer_size().bytes(),
-                        Pointer::new(*alloc_id, Size::from_bytes(0)),
+                        Pointer::new(*alloc_id, Size::from_bytes(0)).with_default_tag(),
                         alloc,
                         None
                     )

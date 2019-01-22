@@ -41,12 +41,12 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
                     .collect::<Result<Vec<_>, _>>()?;
                 match &item_path[..] {
                     "alloc::alloc::::__rust_alloc" | "alloc::alloc::::__rust_alloc_zeroed" => {
-                        let size = ecx.read_scalar(args[0])?.to_usize(ecx.tcx.tcx)?;
+                        let size = ecx.read_scalar(args[0])?.to_usize(&ecx.tcx.tcx)?;
                         insert_stack_trace(&mut traces.stack_traces_mem, stack_trace, size as u128);
                     }
                     "alloc::alloc::::__rust_realloc" => {
-                        let old_size = ecx.read_scalar(args[1])?.to_usize(ecx.tcx.tcx)?;
-                        let new_size = ecx.read_scalar(args[3])?.to_usize(ecx.tcx.tcx)?;
+                        let old_size = ecx.read_scalar(args[1])?.to_usize(&ecx.tcx.tcx)?;
+                        let new_size = ecx.read_scalar(args[3])?.to_usize(&ecx.tcx.tcx)?;
                         if new_size > old_size {
                             insert_stack_trace(
                                 &mut traces.stack_traces_mem,
@@ -72,7 +72,7 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
         match func.layout.ty.sty {
             ty::FnPtr(_) => {
                 let fn_ptr = ecx.read_scalar(func)?.to_ptr()?;
-                ecx.memory.get_fn(fn_ptr)?
+                ecx.memory().get_fn(fn_ptr)?
             }
             ty::FnDef(def_id, substs) => {
                 let substs = ecx.tcx.subst_and_normalize_erasing_regions(

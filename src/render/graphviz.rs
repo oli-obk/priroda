@@ -10,10 +10,10 @@
 
 use crate::rustc::mir::*;
 use crate::step::LocalBreakpoints;
-use miri::Frame;
+use miri::{Frame, Borrow};
 use std::fmt::{self, Debug, Write};
 
-pub fn render_html(frame: &Frame, breakpoints: LocalBreakpoints) -> String {
+pub fn render_html(frame: &Frame<Borrow, u64>, breakpoints: LocalBreakpoints) -> String {
     let mut rendered = String::new();
     render_mir_svg(&frame.mir, breakpoints, &mut rendered, None).unwrap();
     for (i, promoted) in frame.mir.promoted.iter_enumerated() {
