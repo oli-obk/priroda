@@ -226,9 +226,9 @@ fn server(sender: PrirodaSender) {
         .manage(sender)
         .mount("/", routes![please_panic, resources, step_count])
         .mount("/", render::routes::routes())
-        .mount("breakpoints", step::bp_routes::routes())
-        .mount("step", step::step_routes::routes())
-        .mount("watch", watch::routes())
+        .mount("/breakpoints", step::bp_routes::routes())
+        .mount("/step", step::step_routes::routes())
+        .mount("/watch", watch::routes())
         .attach(rocket::fairing::AdHoc::on_launch("Priroda, because code has no privacy rights", |rocket| {
             let config = rocket.config();
             if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {
