@@ -3,6 +3,16 @@
 Remote sensing bugs from your comfy ~~zero~~ gravity hack center in ~~orbit~~
 the browser of your choice.
 
+## Setup
+
+You need a few things before you can get started. At the very minimum you need to have
+the graphviz libraries present.
+
+* debian/ubuntu: `apt install libgraphviz-dev`
+
+Next, you're going to want a libstd with full MIR.The easiest way to obtain this is via
+`cargo miri` (install with `cargo +nightly install --force --git https://github.com/solson/miri miri`).
+
 ## Features
 
 * Supports commands known from gdb
