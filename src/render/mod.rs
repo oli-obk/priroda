@@ -183,33 +183,28 @@ pub fn render_main_window(
     )
 }
 
-// TODO Memory::allocations doesn't exist anymore
-/*
 pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
     let allocs: Vec<_> = pcx
         .ecx
         .memory()
-        .alloc_map().values()
-        .filter_map(|(id, alloc)| {
+        .alloc_map().iter(|values| values.filter_map(|(&id, (_kind, alloc))| {
             alloc
                 .relocations
                 .values()
-                .find(|reloc| reloc.0 == alloc_id)
+                .find(|&&(_tag, reloc)| reloc == id)
                 .map(|_| id)
-        })
-        .collect();
+        }).collect());
     template(
         pcx,
         format!("Allocations with pointers to Allocation {}", alloc_id),
         html!{
             @for id in allocs {
-                a(href=format!("/ptr/{}", id.0)) { : format!("Allocation {}", id) }
+                a(href=format!("/ptr/{}", id)) { : format!("Allocation {}", id) }
                 br;
             }
         },
     )
 }
-*/
 
 pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -> Html<String> {
     use horrorshow::Raw;
@@ -259,7 +254,7 @@ pub mod routes {
     use crate::*;
 
     pub fn routes() -> Vec<::rocket::Route> {
-        routes![index, frame, frame_invalid, ptr /*, reverse_ptr*/]
+        routes![index, frame, frame_invalid, ptr, reverse_ptr]
     }
 
     view_route!(index: "/", |pcx, flash: FlashString| {
@@ -282,10 +277,7 @@ pub mod routes {
         render::render_ptr_memory(pcx, AllocId(alloc_id), offset)
     });
 
-    // TODO Memory::allocations doesn't exist anymore
-    /*
     view_route!(reverse_ptr: "/reverse_ptr/<ptr>", |pcx, ptr: u64| {
         render::render_reverse_ptr(pcx, ptr)
     });
-    */
 }
