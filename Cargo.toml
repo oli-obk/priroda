@@ -24,7 +24,7 @@ serde_json = "1.0.20"
 
 open = "1.2.2"
 promising-future = "0.2"
-syntect = "2.1.0"
+syntect = "3.0.2"
 horrorshow = "0.6.2"
 cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "b65e460ee323b31dca55b5541141a6b73272e72a" }
 rental = "0.5.1"
