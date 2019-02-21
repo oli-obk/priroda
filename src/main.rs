@@ -118,7 +118,7 @@ fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx
         .expect("no main or start function found");
 
     miri::create_ecx(tcx, main_id, miri::MiriConfig {
-        validate: false,
+        validate: true,
         args: vec![],
     }).unwrap()
 }
