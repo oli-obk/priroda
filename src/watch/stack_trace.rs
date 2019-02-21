@@ -76,7 +76,7 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
             }
             ty::FnDef(def_id, substs) => {
                 let substs = ecx.tcx.subst_and_normalize_erasing_regions(
-                    ecx.substs(),
+                    ecx.stack().last().expect("top frame").instance.substs,
                     ParamEnv::reveal_all(),
                     &substs,
                 );
