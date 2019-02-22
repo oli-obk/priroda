@@ -7,23 +7,19 @@ use miri::{Frame, Borrow};
 
 use horrorshow::prelude::*;
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{Color, Style, ThemeSet};
-use syntect::html::{styles_to_coloured_html, IncludeBackground};
-use syntect::parsing::{SyntaxDefinition, SyntaxSet};
+use syntect::highlighting::{Style, ThemeSet};
+use syntect::html::{styled_line_to_highlighted_html, IncludeBackground};
+use syntect::parsing::SyntaxSet;
+use syntect::util::{split_at, LinesWithEndings};
 
 use self::rent_highlight_cache::*;
 
+lazy_static::lazy_static! {
+    static ref SYNTAX_SET: SyntaxSet = SyntaxSet::load_defaults_nonewlines();
+    static ref THEME_SET: ThemeSet = ThemeSet::load_defaults();
+}
+
 thread_local! {
-    // Loading the syntax every time is very heavy and causes noticable slowdown
-    // This is a thread local as a `SyntaxDefinition` is neither `Send` nor `Sync`
-    static RUST_SYNTAX: SyntaxDefinition = {
-        SyntaxSet::load_defaults_nonewlines().find_syntax_by_extension("rs").unwrap().to_owned()
-    };
-
-    static THEME_SET: ThemeSet = {
-        ThemeSet::load_defaults()
-    };
-
     // This is a thread local, because a `Span` is only valid within one thread
     static CACHED_HIGHLIGHTED_FILES: RefCell<HashMap<u64, HighlightCacheEntry>> = {
         RefCell::new(HashMap::new())
@@ -39,35 +35,6 @@ rental! {
             highlighted: Vec<(Style, &'string str)>
         }
     }
-}
-
-// Split between i and i+1
-fn split<'s, A: Clone>(
-    mut s: &[(A, &'s str)],
-    mut i: usize,
-) -> (Vec<(A, &'s str)>, Vec<(A, &'s str)>) {
-    let mut before = Vec::new();
-    let mut after = Vec::new();
-
-    while s.len() > 0 && s[0].1.len() < i {
-        i -= s[0].1.len();
-        before.push(s[0].clone());
-        s = &s[1..];
-    }
-
-    if s.len() > 0 {
-        let (data, str) = s[0].clone();
-        s = &s[1..];
-        if i != 0 {
-            before.push((data.clone(), &str[..i]));
-        }
-        if i != str.len() {
-            after.push((data, &str[i..]));
-        }
-    }
-
-    after.extend(s.iter().cloned());
-    (before, after)
 }
 
 pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Borrow, u64>>) -> Box<RenderBox + Send> {
@@ -95,50 +62,52 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Borrow, u64>>) -> Box<Ren
         instr_spans.push(span);
     }
 
-    let (bg_color, highlighted_sources) = get_highlighter(|mut h| {
-        let highlighted_sources = instr_spans
-            .iter()
-            .rev()
-            .map(|sp| {
-                let (src, lo, hi) = match get_file_source_for_span(tcx, *sp) {
-                    Ok(res) => res,
-                    Err(err) => return (format!("{:?}", sp), err),
-                };
+    let highlighted_sources = instr_spans
+        .iter()
+        .rev()
+        .map(|sp| {
+            let (src, lo, hi) = match get_file_source_for_span(tcx, *sp) {
+                Ok(res) => res,
+                Err(err) => return (format!("{:?}", sp), err),
+            };
 
-                CACHED_HIGHLIGHTED_FILES.with(|highlight_cache| {
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
+            CACHED_HIGHLIGHTED_FILES.with(|highlight_cache| {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
 
-                    let mut hasher = DefaultHasher::new();
-                    src.hash(&mut hasher);
-                    let hash = hasher.finish();
+                let mut hasher = DefaultHasher::new();
+                src.hash(&mut hasher);
+                let hash = hasher.finish();
 
-                    highlight_cache
-                        .borrow_mut()
-                        .entry(hash)
-                        .or_insert_with(|| {
-                            HighlightCacheEntry::new(src, |src| {
-                                let before_time = ::std::time::Instant::now();
-                                let highlighted = h.highlight(src);
-                                let after_time = ::std::time::Instant::now();
-                                println!("h: {:?}", after_time - before_time);
-                                highlighted
-                            })
+                highlight_cache
+                    .borrow_mut()
+                    .entry(hash)
+                    .or_insert_with(|| {
+                        HighlightCacheEntry::new(src, |src| {
+                            let before_time = ::std::time::Instant::now();
+                            let highlighted = syntax_highlight(src);
+                            let after_time = ::std::time::Instant::now();
+                            println!("h: {:?}", after_time - before_time);
+                            highlighted
                         })
-                        .rent(|highlighted| (format!("{:?}", sp), mark_span(highlighted, lo, hi)))
-                })
+                    })
+                    .rent(|highlighted| (format!("{:?}", sp), mark_span(highlighted, lo, hi)))
             })
-            .collect::<Vec<_>>();
-
-        highlighted_sources
-    });
+        })
+        .collect::<Vec<_>>();
 
     let after_time = ::std::time::Instant::now();
     println!("s: {:?}", after_time - before_time);
 
+    let style = if let Some(bg_color) = THEME_SET.themes["Solarized (dark)"].settings.background {
+        format!("background-color: #{:02x}{:02x}{:02x}; display: block;", bg_color.r, bg_color.g, bg_color.b)
+    } else {
+        String::new()
+    };
+
     box_html! {
         pre {
-            code(id="the_code", style=format!("background-color: #{:02x}{:02x}{:02x}; display: block;", bg_color.r, bg_color.g, bg_color.b)) {
+            code(id="the_code", style=style) {
                 @ for (sp, source) in highlighted_sources {
                     : sp; br;
                     : Raw(source);
@@ -147,15 +116,6 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Borrow, u64>>) -> Box<Ren
             }
         }
     }
-}
-
-fn get_highlighter<T>(f: impl FnOnce(HighlightLines) -> T) -> (Color, T) {
-    THEME_SET.with(|ts| {
-        let t = &ts.themes["Solarized (light)"];
-        let bg_color = t.settings.background.unwrap_or(Color::WHITE);
-        let h = RUST_SYNTAX.with(|syntax| HighlightLines::new(syntax, t));
-        (bg_color, f(h))
-    })
 }
 
 fn get_file_source_for_span(tcx: TyCtxt, sp: Span) -> Result<(String, usize, usize), String> {
@@ -178,16 +138,24 @@ fn get_file_source_for_span(tcx: TyCtxt, sp: Span) -> Result<(String, usize, usi
     Ok((src, lo, hi))
 }
 
-fn mark_span(src: &[(Style, &str)], lo: usize, hi: usize) -> String {
-    let before_time = ::std::time::Instant::now();
-    let (before, with) = split(src, lo);
-    let (it, after) = split(&with, hi - lo);
-    let after_time = ::std::time::Instant::now();
-    println!("m: {:?}", after_time - before_time);
+fn syntax_highlight<'a, 's>(src: &'s str) -> Vec<(Style, &'s str)> {
+    let theme = &THEME_SET.themes["Solarized (dark)"];
+    let mut h = HighlightLines::new(&SYNTAX_SET.find_syntax_by_extension("rs").unwrap().to_owned(), theme);
 
-    let before = styles_to_coloured_html(&before, IncludeBackground::No);
-    let it = styles_to_coloured_html(&it, IncludeBackground::No);
-    let after = styles_to_coloured_html(&after, IncludeBackground::No);
+    let mut highlighted = Vec::new();
+    for line in LinesWithEndings::from(src) {
+        highlighted.extend(h.highlight(line, &SYNTAX_SET));
+    }
+    highlighted
+}
+
+fn mark_span(src: &[(Style, &str)], lo: usize, hi: usize) -> String {
+    let (before, with) = split_at(src, lo);
+    let (it, after) = split_at(&with, hi - lo);
+
+    let before = styled_line_to_highlighted_html(&before, IncludeBackground::No);
+    let it = styled_line_to_highlighted_html(&it, IncludeBackground::No);
+    let after = styled_line_to_highlighted_html(&after, IncludeBackground::No);
 
     if lo == hi {
         assert_eq!(it.len(), 0);
