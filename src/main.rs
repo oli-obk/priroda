@@ -8,6 +8,7 @@ extern crate syntax;
 extern crate rustc;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
+extern crate rustc_mir;
 
 extern crate regex;
 extern crate lazy_static;
