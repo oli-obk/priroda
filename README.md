@@ -11,7 +11,7 @@ the graphviz libraries present.
 * debian/ubuntu: `apt install libgraphviz-dev`
 
 Next, you're going to want a libstd with full MIR.The easiest way to obtain this is via
-`cargo miri` (install with `cargo +nightly install --force --git https://github.com/solson/miri miri`).
+`cargo miri` (install with `cargo +nightly install --force --git https://github.com/rust-lang/miri miri`).
 
 ## Features
 
@@ -37,7 +37,7 @@ on Mozilla IRC in any of the Rust IRC channels (`#rust`, `#rust-offtopic`, etc).
 
 ### Miri
 
-This project depends entirely on [Miri](https://github.com/solson/miri).
+This project depends entirely on [Miri](https://github.com/rust-lang/miri).
 So if you want to improve something that we fail to interpret, add a unit test
 to Miri and fix it there.
 
