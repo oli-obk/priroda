@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::rustc::mir::*;
+use rustc::mir::*;
 use crate::step::LocalBreakpoints;
 use miri::{Frame, Tag};
 use std::fmt::{self, Debug, Write};
@@ -40,7 +40,7 @@ pub fn render_html(frame: &Frame<Tag, NonZeroU64>, breakpoints: LocalBreakpoints
     let edge_colors = {
         let blck = &frame.mir.basic_blocks()[frame.block];
         let (targets, unwind) = if frame.stmt == blck.statements.len() {
-            use crate::rustc::mir::TerminatorKind::*;
+            use rustc::mir::TerminatorKind::*;
             match blck.terminator().kind {
                 Goto { target } => (vec![target], None),
                 SwitchInt { ref targets, .. } => (targets.to_vec(), None),

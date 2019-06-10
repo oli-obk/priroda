@@ -1,7 +1,7 @@
 use std::num::NonZeroU64;
 
-use crate::rustc::mir::{self, interpret::InterpError};
-use crate::rustc::ty::{
+use rustc::mir::{self, interpret::InterpError};
+use rustc::ty::{
     layout::{Abi, Size},
     subst::Subst,
     ParamEnv, TyKind, TyS, TypeAndMut,

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use crate::rustc::mir::interpret::{Allocation, Pointer, PointerArithmetic};
-use crate::rustc::ty::layout::Size;
-use crate::rustc::ty::Instance;
+use rustc::mir::interpret::{Allocation, Pointer, PointerArithmetic};
+use rustc::ty::layout::Size;
+use rustc::ty::Instance;
 
 use crate::*;
 

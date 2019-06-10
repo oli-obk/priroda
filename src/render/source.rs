@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::num::NonZeroU64;
 
-use crate::rustc::ty::TyCtxt;
+use rustc::ty::TyCtxt;
 use crate::syntax::source_map::Span;
 use miri::{Frame, Tag};
 

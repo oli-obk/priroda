@@ -1,6 +1,6 @@
-use crate::rustc::hir::def_id::{CrateNum, DefId, DefIndex};
-use crate::rustc::mir;
-use crate::rustc_data_structures::indexed_vec::Idx;
+use rustc::hir::def_id::{CrateNum, DefId, DefIndex};
+use rustc::mir;
+use rustc_data_structures::indexed_vec::Idx;
 use std::collections::{HashMap, HashSet};
 use std::iter::Iterator;
 
@@ -133,7 +133,7 @@ pub fn is_ret(ecx: &InterpretCx) -> bool {
         let basic_block = &stack.mir.basic_blocks()[stack.block];
 
         match basic_block.terminator().kind {
-            crate::rustc::mir::TerminatorKind::Return => stack.stmt >= basic_block.statements.len(),
+            rustc::mir::TerminatorKind::Return => stack.stmt >= basic_block.statements.len(),
             _ => false,
         }
     } else {

@@ -2,7 +2,7 @@ use std::fmt::Write;
 use std::io::{self, Write as IoWrite};
 use std::process::{Command, Stdio};
 
-use crate::rustc::ty::{self, Instance, InstanceDef, ParamEnv};
+use rustc::ty::{self, Instance, InstanceDef, ParamEnv};
 
 use crate::*;
 
@@ -23,7 +23,7 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
         (frame.stmt, blck)
     };
     if stmt == blck.statements.len() {
-        use crate::rustc::mir::TerminatorKind::*;
+        use rustc::mir::TerminatorKind::*;
         match &blck.terminator().kind {
             Call { func, args, .. } => {
                 let instance = instance_for_call_operand(ecx, func);
@@ -47,7 +47,7 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
 
 fn instance_for_call_operand<'a, 'tcx: 'a>(
     ecx: &mut InterpretCx<'a, 'tcx>,
-    func: &'tcx crate::rustc::mir::Operand,
+    func: &'tcx rustc::mir::Operand,
 ) -> Instance<'tcx> {
     let res: ::miri::InterpResult<Instance> = try {
         let func = ecx.eval_operand(func, None)?;
@@ -161,7 +161,7 @@ fn create_flame_graph<'a, 'tcx: 'a>(
 ) -> io::Result<()> {
     let mut flame_data = String::new();
     for (stack_trace, count) in traces {
-        let mut last_crate = crate::rustc::hir::def_id::LOCAL_CRATE;
+        let mut last_crate = rustc::hir::def_id::LOCAL_CRATE;
         writeln!(
             flame_data,
             "{} {}",

@@ -43,9 +43,9 @@ use std::ops::FnOnce;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::rustc::mir;
-use crate::rustc::ty::TyCtxt;
-use crate::rustc::hir::def_id::LOCAL_CRATE;
+use rustc::mir;
+use rustc::ty::TyCtxt;
+use rustc::hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
 
 use promising_future::future_promise;
@@ -59,7 +59,7 @@ use miri::AllocId;
 use crate::step::BreakpointTree;
 
 fn should_hide_stmt(stmt: &mir::Statement) -> bool {
-    use crate::rustc::mir::StatementKind::*;
+    use rustc::mir::StatementKind::*;
     match stmt.kind {
         StorageLive(_) | StorageDead(_) | Nop => true,
         _ => false,
