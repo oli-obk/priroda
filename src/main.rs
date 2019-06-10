@@ -39,7 +39,7 @@ mod render;
 mod step;
 mod watch;
 
-use std::boxed::FnBox;
+use std::ops::FnOnce;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -126,7 +126,7 @@ fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> InterpretCx<'a, 'tcx
     }).unwrap()
 }
 
-pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>);
+pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<dyn FnOnce(&mut PrirodaContext) + Send>>>);
 
 impl PrirodaSender {
     fn do_work<'r, T, F>(&self, f: F) -> Result<T, Html<String>>
@@ -300,7 +300,7 @@ fn main() {
                     struct PrirodaCompilerCalls {
                         step_count: Arc<Mutex<u128>>,
                         config: Arc<Mutex<Config>>,
-                        receiver: Arc<Mutex<std::sync::mpsc::Receiver<Box<FnBox(&mut PrirodaContext) + Send>>>>,
+                        receiver: Arc<Mutex<std::sync::mpsc::Receiver<Box<dyn FnOnce(&mut PrirodaContext) + Send>>>>,
                     }
 
                     impl rustc_driver::Callbacks for PrirodaCompilerCalls {
@@ -346,7 +346,7 @@ fn main() {
 
                                 // process commands
                                 for command in receiver.iter() {
-                                    command.call_box((&mut pcx,));
+                                    command(&mut pcx);
                                 }
                             });
 

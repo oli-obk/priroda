@@ -207,7 +207,6 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
 }
 
 pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -> Html<String> {
-    use horrorshow::Raw;
     let (mem, offset, rest) = if let Ok((_, mem, bytes)) = locals::print_ptr(
         &pcx.ecx,
         Pointer::new(alloc_id, Size::from_bytes(offset)).with_tag(miri::Tag::Untagged).into(),

@@ -38,7 +38,7 @@ rental! {
     }
 }
 
-pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Tag, NonZeroU64>>) -> Box<RenderBox + Send> {
+pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Tag, NonZeroU64>>) -> Box<dyn RenderBox + Send> {
     let before_time = ::std::time::Instant::now();
 
     if frame.is_none() {
