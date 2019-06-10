@@ -1,9 +1,10 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::num::NonZeroU64;
 
 use crate::rustc::ty::TyCtxt;
 use crate::syntax::source_map::Span;
-use miri::{Frame, Borrow};
+use miri::{Frame, Tag};
 
 use horrorshow::prelude::*;
 use syntect::easy::HighlightLines;
@@ -37,7 +38,7 @@ rental! {
     }
 }
 
-pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Borrow, u64>>) -> Box<RenderBox + Send> {
+pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Tag, NonZeroU64>>) -> Box<RenderBox + Send> {
     let before_time = ::std::time::Instant::now();
 
     if frame.is_none() {

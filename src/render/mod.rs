@@ -210,7 +210,7 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
     use horrorshow::Raw;
     let (mem, offset, rest) = if let Ok((_, mem, bytes)) = locals::print_ptr(
         &pcx.ecx,
-        Pointer::new(alloc_id, Size::from_bytes(offset)).with_default_tag().into(),
+        Pointer::new(alloc_id, Size::from_bytes(offset)).with_tag(miri::Tag::Untagged).into(),
         None,
     ) {
         if bytes * 2 > offset {

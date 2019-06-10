@@ -1,22 +1,24 @@
-use crate::rustc::mir::{self, interpret::EvalErrorKind};
+use std::num::NonZeroU64;
+
+use crate::rustc::mir::{self, interpret::InterpError};
 use crate::rustc::ty::{
     layout::{Abi, Size},
     TyKind, TyS, TypeAndMut,
 };
 
 use miri::{
-    Allocation, EvalResult, Frame, OpTy, Operand, Pointer,
-    Scalar, ScalarMaybeUndef, Stacks, Borrow, Immediate,
+    Allocation, InterpResult, Frame, OpTy, Operand, Pointer,
+    Scalar, ScalarMaybeUndef, Stacks, Tag, Immediate,
 };
 
 use horrorshow::prelude::*;
 use horrorshow::Template;
 
-use crate::EvalContext;
+use crate::InterpretCx;
 
 pub fn render_locals<'a, 'tcx: 'a>(
-    ecx: &EvalContext<'a, 'tcx>,
-    frame: &Frame<'tcx, 'tcx, Borrow, u64>,
+    ecx: &InterpretCx<'a, 'tcx>,
+    frame: &Frame<'tcx, 'tcx, Tag, NonZeroU64>,
 ) -> String {
     let &Frame {
         ref mir,
@@ -34,17 +36,27 @@ pub fn render_locals<'a, 'tcx: 'a>(
                 .map(|n| n.as_str().to_string())
                 .unwrap_or_else(String::new);
 
-            let op_ty = if id == mir::RETURN_PLACE {
+            // FIXME Don't panic when trying to read from uninit variable.
+            // Panic message:
+            // > error: internal compiler error: src/librustc_mir/interpret/eval_context.rs:142:
+            // > The type checker should prevent reading from a never-written local
+            let op_ty = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if id == mir::RETURN_PLACE {
                 return_place.map(|p| {
                     ecx.place_to_op(p).unwrap()
-                })
+                    }).ok_or(false)
             } else {
-                ecx.access_local(frame, id, None).ok()
+                    ecx.access_local(frame, id, None).map_err(|_| false)
+                }
+            })) {
+                Ok(op_ty) => op_ty,
+                Err(_) => Err(true),
             };
 
             let (alloc, val, style) = match op_ty {
-                None => (None, "&lt;uninit&gt;".to_owned(), "font-size: 0;"),
-                Some(op_ty) => {
+                Err(false) => (None, "&lt;dead&gt;".to_owned(), "font-size: 0;"),
+                Err(true) => (None, "&lt;uninit&gt;".to_owned(), "color: darkmagenta;"),
+                Ok(op_ty) => {
                     match print_operand(ecx, op_ty) {
                         Ok((alloc, text)) => (alloc, text, ""),
                         Err(()) => (None, "&lt;error&gt;".to_owned(), "color: red;"),
@@ -98,34 +110,34 @@ pub fn render_locals<'a, 'tcx: 'a>(
         .unwrap()
 }
 
-fn print_scalar_maybe_undef(val: ScalarMaybeUndef<miri::Borrow>) -> String {
+fn print_scalar_maybe_undef(val: ScalarMaybeUndef<miri::Tag>) -> String {
     match val {
         ScalarMaybeUndef::Undef => "&lt;undef &gt;".to_string(),
         ScalarMaybeUndef::Scalar(val) => print_scalar(val),
     }
 }
 
-fn print_scalar(val: Scalar<miri::Borrow>) -> String {
+fn print_scalar(val: Scalar<miri::Tag>) -> String {
     match val {
         Scalar::Ptr(ptr) => format!(
             "<a href=\"/ptr/{alloc}/{offset}\">Pointer({alloc})[{offset}]</a>",
             alloc = ptr.alloc_id.0,
             offset = ptr.offset.bytes()
         ),
-        Scalar::Bits { bits, size } => {
+        Scalar::Raw { data, size } => {
             if size == 0 {
                 "&lt;zst&gt;".to_string()
             } else {
-                format!("0x{:0width$X}", bits, width = (size as usize) / 8)
+                format!("0x{:0width$X}", data, width = (size as usize) / 8)
             }
         }
     }
 }
 
 fn pp_operand<'a, 'tcx: 'a>(
-    ecx: &EvalContext<'a, 'tcx>,
-    op_ty: OpTy<'tcx, miri::Borrow>,
-) -> EvalResult<'tcx, String> {
+    ecx: &InterpretCx<'a, 'tcx>,
+    op_ty: OpTy<'tcx, miri::Tag>,
+) -> InterpResult<'tcx, String> {
     match op_ty.layout.ty.sty {
         TyKind::RawPtr(TypeAndMut {
             ty: &TyS {
@@ -143,7 +155,7 @@ fn pp_operand<'a, 'tcx: 'a>(
             if let Operand::Immediate(val) = *op_ty {
                 if let Immediate::ScalarPair(
                     ScalarMaybeUndef::Scalar(Scalar::Ptr(ptr)),
-                    ScalarMaybeUndef::Scalar(Scalar::Bits { bits: len, .. }),
+                    ScalarMaybeUndef::Scalar(Scalar::Raw { data: len, .. }),
                 ) = val
                 {
                     if let Ok(allocation) = ecx.memory().get(ptr.alloc_id) {
@@ -152,7 +164,7 @@ fn pp_operand<'a, 'tcx: 'a>(
                             let alloc_bytes = &allocation.bytes[offset as usize
                                 ..(offset as usize)
                                     .checked_add(len as usize)
-                                    .ok_or(EvalErrorKind::AssumptionNotHeld)?];
+                                    .ok_or(InterpError::AssumptionNotHeld)?];
                             let s = String::from_utf8_lossy(alloc_bytes);
                             return Ok(format!("\"{}\"", s));
                         }
@@ -162,7 +174,7 @@ fn pp_operand<'a, 'tcx: 'a>(
         }
         TyKind::Adt(adt_def, _substs) => {
             if let Operand::Immediate(Immediate::Scalar(ScalarMaybeUndef::Undef)) = *op_ty {
-                Err(EvalErrorKind::AssumptionNotHeld)?;
+                Err(InterpError::AssumptionNotHeld)?;
             }
 
             let variant = ecx.read_discriminant(op_ty)?.1;
@@ -173,7 +185,7 @@ fn pp_operand<'a, 'tcx: 'a>(
             //println!("{:?} {:?} {:?}", val, ty, adt_def.variants);
             let mut pretty = ecx
                 .tcx
-                .absolute_item_path_str(adt_def.did)
+                .def_path_str(adt_def.did)
                 .replace("<", "&lt;")
                 .replace(">", "&gt;")
                 .to_string();
@@ -189,7 +201,7 @@ fn pp_operand<'a, 'tcx: 'a>(
             }
 
             for (i, adt_field) in adt_fields.iter().enumerate() {
-                let field_pretty: EvalResult<String> = try {
+                let field_pretty: InterpResult<String> = try {
                     let field_op_ty = ecx.operand_field(op_ty, i as u64)?;
                     pp_operand(ecx, field_op_ty)?
                 };
@@ -219,11 +231,11 @@ fn pp_operand<'a, 'tcx: 'a>(
     }
 
     if op_ty.layout.size.bytes() == 0 {
-        Err(EvalErrorKind::AssumptionNotHeld)?;
+        Err(InterpError::AssumptionNotHeld)?;
     }
     if let Abi::Scalar(_) = op_ty.layout.abi {
     } else {
-        Err(EvalErrorKind::AssumptionNotHeld)?;
+        Err(InterpError::AssumptionNotHeld)?;
     }
     let scalar = ecx.read_scalar(op_ty)?;
     if let ScalarMaybeUndef::Scalar(Scalar::Ptr(_)) = &scalar {
@@ -237,7 +249,7 @@ fn pp_operand<'a, 'tcx: 'a>(
             } else if bits == 1 {
                 Ok("true".to_string())
             } else {
-                Err(EvalErrorKind::AssumptionNotHeld.into())
+                Err(InterpError::AssumptionNotHeld.into())
             }
         }
         TyKind::Char if bits < ::std::char::MAX as u128 => {
@@ -245,7 +257,7 @@ fn pp_operand<'a, 'tcx: 'a>(
             if chr.is_ascii() {
                 Ok(format!("'{}'", chr))
             } else {
-                Err(EvalErrorKind::AssumptionNotHeld.into())
+                Err(InterpError::AssumptionNotHeld.into())
             }
         }
         TyKind::Uint(_) => Ok(format!("{0}", bits)),
@@ -262,16 +274,16 @@ fn pp_operand<'a, 'tcx: 'a>(
                 F64 if bits < ::std::u64::MAX as u128 => {
                     Ok(format!("{}", <f64>::from_bits(bits as u64)))
                 }
-                _ => Err(EvalErrorKind::AssumptionNotHeld.into()),
+                _ => Err(InterpError::AssumptionNotHeld.into()),
             }
         }
-        _ => Err(EvalErrorKind::AssumptionNotHeld.into()),
+        _ => Err(InterpError::AssumptionNotHeld.into()),
     }
 }
 
 pub fn print_operand<'a, 'tcx: 'a>(
-    ecx: &EvalContext<'a, 'tcx>,
-    op_ty: OpTy<'tcx, miri::Borrow>,
+    ecx: &InterpretCx<'a, 'tcx>,
+    op_ty: OpTy<'tcx, miri::Tag>,
 ) -> Result<(Option<u64>, String), ()> {
     let pretty = pp_operand(ecx, op_ty);
 
@@ -305,8 +317,8 @@ pub fn print_operand<'a, 'tcx: 'a>(
 }
 
 pub fn print_ptr(
-    ecx: &EvalContext,
-    ptr: Scalar<Borrow>,
+    ecx: &InterpretCx,
+    ptr: Scalar<Tag>,
     size: Option<u64>,
 ) -> Result<(Option<u64>, String, u64), ()> {
     let ptr = ptr.to_ptr().map_err(|_| ())?;
@@ -324,7 +336,7 @@ pub fn print_ptr(
     }
 }
 
-pub fn print_alloc(ptr_size: u64, ptr: Pointer<Borrow>, alloc: &Allocation<Borrow, Stacks>, size: Option<u64>) -> String {
+pub fn print_alloc(ptr_size: u64, ptr: Pointer<Tag>, alloc: &Allocation<Tag, Stacks>, size: Option<u64>) -> String {
     use std::fmt::Write;
     let end = size
         .map(|s| s + ptr.offset.bytes())

@@ -1,4 +1,4 @@
-use crate::rustc::hir::def_id::{CrateNum, DefId, DefIndex, DefIndexAddressSpace};
+use crate::rustc::hir::def_id::{CrateNum, DefId, DefIndex};
 use crate::rustc::mir;
 use crate::rustc_data_structures::indexed_vec::Idx;
 use std::collections::{HashMap, HashSet};
@@ -6,7 +6,7 @@ use std::iter::Iterator;
 
 use serde::de::{Deserialize, Deserializer, Error as SerdeError};
 
-use crate::{EvalContext, PrirodaContext};
+use crate::{InterpretCx, PrirodaContext};
 
 pub enum ShouldContinue {
     Continue,
@@ -59,7 +59,7 @@ impl BreakpointTree {
         }
     }
 
-    pub fn is_at_breakpoint(&self, ecx: &EvalContext) -> bool {
+    pub fn is_at_breakpoint(&self, ecx: &InterpretCx) -> bool {
         let frame = ecx.frame();
         self.for_def_id(frame.instance.def_id())
             .breakpoint_exists(frame.block, frame.stmt)
@@ -87,7 +87,7 @@ impl<'a> LocalBreakpoints<'a> {
 
 pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> String
 where
-    F: Fn(&EvalContext) -> ShouldContinue,
+    F: Fn(&InterpretCx) -> ShouldContinue,
 {
     let mut message = None;
     loop {
@@ -128,7 +128,7 @@ where
     message.unwrap_or_else(String::new)
 }
 
-pub fn is_ret(ecx: &EvalContext) -> bool {
+pub fn is_ret(ecx: &InterpretCx) -> bool {
     if let Some(stack) = ecx.stack().last() {
         let basic_block = &stack.mir.basic_blocks()[stack.block];
 
@@ -143,12 +143,11 @@ pub fn is_ret(ecx: &EvalContext) -> bool {
 
 fn parse_breakpoint_from_url(s: &str) -> Result<Breakpoint, String> {
     let regex = ::regex::Regex::new(r#"([^@]+)@(\d+):(\d+)"#).unwrap();
-    // DefId(1/0:14824 ~ mycrate::main)@1:3
-    //       ^ ^ ^                      ^ ^
-    //       | | |                      | statement
-    //       | | |                      BasicBlock
-    //       | | DefIndex::as_array_index()
-    //       | DefIndexAddressSpace
+    // DefId(1:14824 ~ mycrate::main)@1:3
+    //       ^ ^                      ^ ^
+    //       | |                      | statement
+    //       | |                      BasicBlock
+    //       | DefIndex::as_array_index()
     //       CrateNum
 
     let s = s.replace("%20", " ");
@@ -178,24 +177,19 @@ fn parse_breakpoint_from_url(s: &str) -> Result<Breakpoint, String> {
 }
 
 fn parse_def_id(s: &str) -> Result<DefId, String> {
-    let regex = ::regex::Regex::new(r#"DefId\((\d+)/(0|1):(\d+) ~ [^\)]+\)"#).unwrap();
+    let regex = ::regex::Regex::new(r#"DefId\((\d+):(\d+) ~ [^\)]+\)"#).unwrap();
     let caps = regex
         .captures(&s)
         .ok_or_else(|| format!("Invalid def_id {}", s))?;
 
     let crate_num = CrateNum::new(caps.get(1).unwrap().as_str().parse::<usize>().unwrap());
-    let address_space = match caps.get(2).unwrap().as_str().parse::<u64>().unwrap() {
-        0 => DefIndexAddressSpace::Low,
-        1 => DefIndexAddressSpace::High,
-        _ => return Err("address_space is not 0 or 1".to_string()),
-    };
     let index = caps
-        .get(3)
+        .get(2)
         .unwrap()
         .as_str()
         .parse::<usize>()
         .map_err(|_| "index is not a positive integer".to_string())?;
-    let def_index = DefIndex::from_array_index(index, address_space);
+    let def_index = DefIndex::from_usize(index);
     Ok(DefId {
         krate: crate_num,
         index: def_index,

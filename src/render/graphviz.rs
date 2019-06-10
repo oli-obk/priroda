@@ -10,10 +10,11 @@
 
 use crate::rustc::mir::*;
 use crate::step::LocalBreakpoints;
-use miri::{Frame, Borrow};
+use miri::{Frame, Tag};
 use std::fmt::{self, Debug, Write};
+use std::num::NonZeroU64;
 
-pub fn render_html(frame: &Frame<Borrow, u64>, breakpoints: LocalBreakpoints) -> String {
+pub fn render_html(frame: &Frame<Tag, NonZeroU64>, breakpoints: LocalBreakpoints) -> String {
     let mut rendered = String::new();
     render_mir_svg(&frame.mir, breakpoints, &mut rendered, None).unwrap();
     for (i, promoted) in frame.mir.promoted.iter_enumerated() {
@@ -119,7 +120,7 @@ pub fn render_html(frame: &Frame<Borrow, u64>, breakpoints: LocalBreakpoints) ->
 
 /// Write a graphviz DOT graph of a list of MIRs.
 pub fn render_mir_svg<W: Write>(
-    mir: &Mir,
+    mir: &Body,
     breakpoints: LocalBreakpoints,
     w: &mut W,
     promoted: Option<usize>,
@@ -128,7 +129,7 @@ pub fn render_mir_svg<W: Write>(
     if let Some(promoted) = promoted {
         writeln!(dot, "digraph promoted{} {{", promoted)?;
     } else {
-        writeln!(dot, "digraph Mir {{")?;
+        writeln!(dot, "digraph Body {{")?;
     }
 
     // Global graph properties
@@ -157,7 +158,7 @@ pub fn render_mir_svg<W: Write>(
 /// `LabelText::HtmlStr` from libgraphviz.)
 fn write_node_label<W: Write>(
     block: BasicBlock,
-    mir: &Mir,
+    mir: &Body,
     breakpoints: LocalBreakpoints,
     promoted: Option<usize>,
     w: &mut W,
@@ -211,7 +212,7 @@ fn write_node_label<W: Write>(
 /// Write a graphviz DOT node for the given basic block.
 fn write_node<W: Write>(
     block: BasicBlock,
-    mir: &Mir,
+    mir: &Body,
     breakpoints: LocalBreakpoints,
     promoted: Option<usize>,
     w: &mut W,
@@ -228,7 +229,7 @@ fn write_node<W: Write>(
 }
 
 /// Write graphviz DOT edges with labels between the given basic block and all of its successors.
-fn write_edges<W: Write>(source: BasicBlock, mir: &Mir, w: &mut W) -> fmt::Result {
+fn write_edges<W: Write>(source: BasicBlock, mir: &Body, w: &mut W) -> fmt::Result {
     let terminator = mir[source].terminator();
     let labels = terminator.kind.fmt_successor_labels();
 
