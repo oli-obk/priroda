@@ -76,22 +76,20 @@ pub fn render_main_window(
         .stack()
         .iter()
         .map(|&Frame { instance, span, .. }| {
-            (
-                if pcx
-                    .ecx
-                    .tcx
-                    .def_key(instance.def_id())
-                    .disambiguated_data
-                    .data
-                    == DefPathData::ClosureExpr
-                {
-                    "inside call to closure".to_string()
-                } else {
-                    instance.to_string()
-                },
-                pcx.ecx.tcx.sess.source_map().span_to_string(span),
-                format!("{:?}", instance.def_id()),
-            )
+            let name = if pcx
+                .ecx
+                .tcx
+                .def_key(instance.def_id())
+                .disambiguated_data
+                .data
+                == DefPathData::ClosureExpr
+            {
+                "inside call to closure".to_string()
+            } else {
+                instance.to_string()
+            };
+            let span = self::source::pretty_src_path(span);
+            (name, span, format!("{:?}", instance.def_id()))
         })
         .collect();
     let rendered_breakpoints: Vec<String> = pcx
