@@ -3,7 +3,8 @@ use std::num::NonZeroU64;
 use crate::rustc::mir::{self, interpret::InterpError};
 use crate::rustc::ty::{
     layout::{Abi, Size},
-    TyKind, TyS, TypeAndMut,
+    subst::Subst,
+    ParamEnv, TyKind, TyS, TypeAndMut,
 };
 
 use miri::{
@@ -23,6 +24,7 @@ pub fn render_locals<'a, 'tcx: 'a>(
     let &Frame {
         ref mir,
         ref return_place,
+        ref instance,
         ..
     } = frame;
 
@@ -63,7 +65,8 @@ pub fn render_locals<'a, 'tcx: 'a>(
                     }
                 }
             };
-            (name, local_decl.ty.to_string(), alloc, val, style)
+            let ty = ecx.tcx.normalize_erasing_regions(ParamEnv::reveal_all(), local_decl.ty.subst(ecx.tcx.tcx, instance.substs));
+            (name, ty.to_string(), alloc, val, style)
         })
         .collect();
 
