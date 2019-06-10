@@ -11,8 +11,8 @@ edition = "2018"
 [dependencies]
 regex = "1.0"
 lazy_static = "1.0.0"
-rocket = { git = "https://github.com/oli-obk/Rocket.git" }
-rocket_codegen = { git = "https://github.com/oli-obk/Rocket.git" }
+rocket = "0.4.1"
+rocket_codegen = "0.4.1"
 miri = { git = "https://github.com/solson/miri.git", branch = "master" }
 
 log = "0.4"
