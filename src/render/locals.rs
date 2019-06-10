@@ -92,9 +92,9 @@ pub fn render_locals<'a, 'tcx: 'a>(
                         th(rowspan=1) { span(class="vertical") { : "Return" } }
                     } else if i == 1 && arg_count != 0 {
                         th(rowspan=arg_count) { span(class="vertical") { : "Arguments" } }
-                    } else if i == arg_count + 1 {
+                    } else if i == arg_count + 1 && var_count != 0 {
                         th(rowspan=var_count) { span(class="vertical") { : "Variables" } }
-                    } else if i == var_count + arg_count + 1 {
+                    } else if i == var_count + arg_count + 1 && tmp_count != 0 {
                         th(rowspan=tmp_count) { span(class="vertical") { : "Temporaries" } }
                     }
                     td { : format!("_{}", i) }
