@@ -8,6 +8,7 @@ extern crate syntax;
 extern crate rustc;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
+extern crate rustc_interface;
 extern crate rustc_mir;
 
 extern crate regex;
@@ -38,14 +39,14 @@ mod render;
 mod step;
 mod watch;
 
-use std::boxed::FnBox;
+use std::ops::FnOnce;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::rustc::mir;
-use crate::rustc::ty::TyCtxt;
-use crate::rustc_driver::driver;
-use crate::rustc::hir::def_id::LOCAL_CRATE;
+use rustc::mir;
+use rustc::ty::TyCtxt;
+use rustc::hir::def_id::LOCAL_CRATE;
+use rustc_interface::interface;
 
 use promising_future::future_promise;
 use rocket::response::content::*;
@@ -58,17 +59,17 @@ use miri::AllocId;
 use crate::step::BreakpointTree;
 
 fn should_hide_stmt(stmt: &mir::Statement) -> bool {
-    use crate::rustc::mir::StatementKind::*;
+    use rustc::mir::StatementKind::*;
     match stmt.kind {
         StorageLive(_) | StorageDead(_) | Nop => true,
         _ => false,
     }
 }
 
-type EvalContext<'a, 'tcx> = miri::EvalContext<'a, 'tcx, 'tcx, miri::Evaluator<'tcx>>;
+type InterpretCx<'a, 'tcx> = miri::InterpretCx<'a, 'tcx, 'tcx, miri::Evaluator<'tcx>>;
 
 pub struct PrirodaContext<'a, 'tcx: 'a> {
-    ecx: EvalContext<'a, 'tcx>,
+    ecx: InterpretCx<'a, 'tcx>,
     step_count: &'a mut u128,
     traces: watch::Traces<'tcx>,
     config: &'a mut Config,
@@ -113,7 +114,7 @@ impl Default for Config {
 
 type RResult<T> = Result<T, Html<String>>;
 
-fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx> {
+fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> InterpretCx<'a, 'tcx> {
     let (main_id, _) = tcx
         .entry_fn(LOCAL_CRATE)
         .expect("no main or start function found");
@@ -121,10 +122,11 @@ fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> EvalContext<'a, 'tcx
     miri::create_ecx(tcx, main_id, miri::MiriConfig {
         validate: true,
         args: vec![],
+        seed: None,
     }).unwrap()
 }
 
-pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<FnBox(&mut PrirodaContext) + Send>>>);
+pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<dyn FnOnce(&mut PrirodaContext) + Send>>>);
 
 impl PrirodaSender {
     fn do_work<'r, T, F>(&self, f: F) -> Result<T, Html<String>>
@@ -294,40 +296,72 @@ fn main() {
             let args = args.clone();
             // Ignore result to restart in case of a crash
             let _ = std::thread::spawn(move || {
-                let _ = rustc_driver::run(move || {
-                    let mut control = driver::CompileController::basic();
+                let _ = rustc_driver::report_ices_to_stderr_if_any(move || {
+                    struct PrirodaCompilerCalls {
+                        step_count: Arc<Mutex<u128>>,
+                        config: Arc<Mutex<Config>>,
+                        receiver: Arc<Mutex<std::sync::mpsc::Receiver<Box<dyn FnOnce(&mut PrirodaContext) + Send>>>>,
+                    }
 
-                    control.after_analysis.callback = Box::new(move |state| {
-                        state.session.abort_if_errors();
-                        let mut step_count =
-                            step_count.lock().unwrap_or_else(|err| err.into_inner());
-                        let mut config = config.lock().unwrap_or_else(|err| err.into_inner());
+                    impl rustc_driver::Callbacks for PrirodaCompilerCalls {
+                        fn after_parsing(&mut self, compiler: &interface::Compiler) -> bool {
+                            let attr = (
+                                syntax::symbol::Symbol::intern("miri"),
+                                syntax::feature_gate::AttributeType::Whitelisted,
+                            );
+                            compiler.session().plugin_attributes.borrow_mut().push(attr);
 
-                        let mut pcx = PrirodaContext {
-                            ecx: create_ecx(state.tcx.unwrap()),
-                            step_count: &mut *step_count,
-                            traces: watch::Traces::new(),
-                            config: &mut *config,
-                        };
-
-                        // Step to the position where miri crashed if it crashed
-                        for _ in 0..*pcx.step_count {
-                            match pcx.ecx.step() {
-                                Ok(true) => {}
-                                res => panic!("Miri is not deterministic causing error {:?}", res),
-                            }
+                            // Continue execution
+                            true
                         }
 
-                        // Just ignore poisoning by panicking
-                        let receiver = receiver.lock().unwrap_or_else(|err| err.into_inner());
+                        fn after_analysis(&mut self, compiler: &interface::Compiler) -> bool {
+                            compiler.session().abort_if_errors();
 
-                        // process commands
-                        for command in receiver.iter() {
-                            command.call_box((&mut pcx,));
+                            compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
+
+                                let mut step_count =
+                                    self.step_count.lock().unwrap_or_else(|err| err.into_inner());
+                                let mut config =
+                                    self.config.lock().unwrap_or_else(|err| err.into_inner());
+
+                                let mut pcx = PrirodaContext {
+                                    ecx: create_ecx(tcx),
+                                    step_count: &mut *step_count,
+                                    traces: watch::Traces::new(),
+                                    config: &mut *config,
+                                };
+
+                                // Step to the position where miri crashed if it crashed
+                                for _ in 0..*pcx.step_count {
+                                    match pcx.ecx.step() {
+                                        Ok(true) => {}
+                                        res => panic!("Miri is not deterministic causing error {:?}", res),
+                                    }
+                                }
+
+                                // Just ignore poisoning by panicking
+                                let receiver =
+                                    self.receiver.lock().unwrap_or_else(|err| err.into_inner());
+
+                                // process commands
+                                for command in receiver.iter() {
+                                    command(&mut pcx);
+                                }
+                            });
+
+                            compiler.session().abort_if_errors();
+
+                            // Don't continue execution
+                            false
                         }
-                    });
+                    }
 
-                    rustc_driver::run_compiler(&*args, Box::new(control), None, None)
+                    rustc_driver::run_compiler(&*args, &mut PrirodaCompilerCalls {
+                        step_count,
+                        config,
+                        receiver,
+                    }, None, None)
                 });
             })
             .join();

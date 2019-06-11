@@ -2,7 +2,7 @@ use std::fmt::Write;
 use std::io::{self, Write as IoWrite};
 use std::process::{Command, Stdio};
 
-use crate::rustc::ty::{self, Instance, InstanceDef, ParamEnv};
+use rustc::ty::{self, Instance, InstanceDef, ParamEnv};
 
 use crate::*;
 
@@ -23,20 +23,20 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
         (frame.stmt, blck)
     };
     if stmt == blck.statements.len() {
-        use crate::rustc::mir::TerminatorKind::*;
+        use rustc::mir::TerminatorKind::*;
         match &blck.terminator().kind {
             Call { func, args, .. } => {
                 let instance = instance_for_call_operand(ecx, func);
                 insert_stack_traces_for_instance(pcx, stack_trace, instance, Some(args));
             }
             Drop { location, .. } => {
-                let location_ty = location.ty(ecx.frame().mir, ecx.tcx.tcx).to_ty(ecx.tcx.tcx);
+                let location_ty = location.ty(ecx.frame().mir, ecx.tcx.tcx).ty;
                 let location_ty = ecx.tcx.subst_and_normalize_erasing_regions(
                     ecx.frame().instance.substs,
                     ParamEnv::reveal_all(),
                     &location_ty,
                 );
-                let instance = rustc_mir::monomorphize::resolve_drop_in_place(ecx.tcx.tcx, location_ty);
+                let instance = Instance::resolve_drop_in_place(ecx.tcx.tcx, location_ty);
                 println!("{:?}", instance);
                 insert_stack_traces_for_instance(pcx, stack_trace, instance, None);
             }
@@ -46,10 +46,10 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
 }
 
 fn instance_for_call_operand<'a, 'tcx: 'a>(
-    ecx: &mut EvalContext<'a, 'tcx>,
-    func: &'tcx crate::rustc::mir::Operand,
+    ecx: &mut InterpretCx<'a, 'tcx>,
+    func: &'tcx rustc::mir::Operand,
 ) -> Instance<'tcx> {
-    let res: ::miri::EvalResult<Instance> = try {
+    let res: ::miri::InterpResult<Instance> = try {
         let func = ecx.eval_operand(func, None)?;
 
         match func.layout.ty.sty {
@@ -67,7 +67,7 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
             }
             _ => {
                 let msg = format!("can't handle callee of type {:?}", func.layout.ty);
-                (err!(Unimplemented(msg)) as ::miri::EvalResult<_>)?;
+                (err!(Unimplemented(msg)) as ::miri::InterpResult<_>)?;
                 unreachable!()
             }
         }
@@ -84,14 +84,14 @@ fn insert_stack_traces_for_instance<'a, 'tcx: 'a>(
     let ecx = &mut pcx.ecx;
     let traces = &mut pcx.traces;
 
-    let item_path = ecx.tcx.absolute_item_path_str(instance.def_id());
+    let item_path = ecx.tcx.def_path_str(instance.def_id());
 
     stack_trace.push((instance,));
     insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);
 
-    let _: ::miri::EvalResult = try {
+    let _: ::miri::InterpResult = try {
         let args = args
-            .ok_or(miri::EvalErrorKind::AssumptionNotHeld)?
+            .ok_or(miri::InterpError::AssumptionNotHeld)?
             .into_iter()
             .map(|op| ecx.eval_operand(op, None))
             .collect::<Result<Vec<_>, _>>()?;
@@ -151,7 +151,7 @@ pub(super) fn show(pcx: &PrirodaContext, buf: &mut impl Write) -> io::Result<()>
 }
 
 fn create_flame_graph<'a, 'tcx: 'a>(
-    ecx: &EvalContext<'a, 'tcx>,
+    ecx: &InterpretCx<'a, 'tcx>,
     mut buf: impl Write,
     traces: &[(Vec<(Instance<'tcx>,)>, u128)],
     name: &str,
@@ -161,14 +161,14 @@ fn create_flame_graph<'a, 'tcx: 'a>(
 ) -> io::Result<()> {
     let mut flame_data = String::new();
     for (stack_trace, count) in traces {
-        let mut last_crate = crate::rustc::hir::def_id::LOCAL_CRATE;
+        let mut last_crate = rustc::hir::def_id::LOCAL_CRATE;
         writeln!(
             flame_data,
             "{} {}",
             stack_trace
                 .iter()
                 .map(|(instance,)| {
-                    let mut name = ecx.tcx.absolute_item_path_str(instance.def_id());
+                    let mut name = ecx.tcx.def_path_str(instance.def_id());
                     match instance.def {
                         InstanceDef::Intrinsic(..) => name.push_str("_[k]"),
                         InstanceDef::DropGlue(..) => name.push_str("_[k]"),
@@ -229,13 +229,13 @@ fn create_flame_graph<'a, 'tcx: 'a>(
 }
 
 fn print_stack_traces<'a, 'tcx: 'a>(
-    ecx: &EvalContext<'a, 'tcx>,
+    ecx: &InterpretCx<'a, 'tcx>,
     mut buf: impl Write,
     traces: &[(Vec<(Instance<'tcx>,)>, u128)],
 ) -> ::std::fmt::Result {
     let name_for_instance = |i: Instance| {
         ecx.tcx
-            .absolute_item_path_str(i.def_id())
+            .def_path_str(i.def_id())
             .replace("<", "&lt;")
             .replace(">", "&gt;")
     };

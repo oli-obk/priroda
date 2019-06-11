@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use crate::rustc::mir::interpret::{Allocation, Pointer, PointerArithmetic};
-use crate::rustc::ty::layout::Size;
-use crate::rustc::ty::Instance;
+use rustc::mir::interpret::{Allocation, Pointer, PointerArithmetic};
+use rustc::ty::layout::Size;
+use rustc::ty::Instance;
 
 use crate::*;
 
@@ -56,11 +56,11 @@ impl AllocTrace {
 
 #[derive(Debug)]
 enum AllocTracePoint {
-    Changed(Allocation<miri::Borrow, miri::Stacks>),
+    Changed(Allocation<miri::Tag, miri::Stacks>),
     Deallocated,
 }
 
-fn eq_alloc(a: &Allocation<miri::Borrow, miri::Stacks>, b: &Allocation<miri::Borrow, miri::Stacks>) -> bool {
+fn eq_alloc(a: &Allocation<miri::Tag, miri::Stacks>, b: &Allocation<miri::Tag, miri::Stacks>) -> bool {
     let Allocation {
         bytes: a_bytes,
         relocations: a_relocs,
@@ -148,7 +148,7 @@ view_route!(show: "/show", |pcx| {
                 AllocTracePoint::Changed(alloc) => {
                     crate::render::locals::print_alloc(
                         pcx.ecx.memory().pointer_size().bytes(),
-                        Pointer::new(*alloc_id, Size::from_bytes(0)).with_default_tag(),
+                        Pointer::new(*alloc_id, Size::from_bytes(0)).with_tag(miri::Tag::Untagged),
                         alloc,
                         None
                     )

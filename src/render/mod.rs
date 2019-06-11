@@ -2,8 +2,8 @@ mod graphviz;
 pub mod locals;
 mod source;
 
-use crate::rustc::hir::map::definitions::DefPathData;
-use crate::rustc::ty::layout::Size;
+use rustc::hir::map::definitions::DefPathData;
+use rustc::ty::layout::Size;
 
 use horrorshow::{Raw, Template};
 use rocket::response::content::Html;
@@ -76,22 +76,20 @@ pub fn render_main_window(
         .stack()
         .iter()
         .map(|&Frame { instance, span, .. }| {
-            (
-                if pcx
-                    .ecx
-                    .tcx
-                    .def_key(instance.def_id())
-                    .disambiguated_data
-                    .data
-                    == DefPathData::ClosureExpr
-                {
-                    "inside call to closure".to_string()
-                } else {
-                    instance.to_string()
-                },
-                pcx.ecx.tcx.sess.source_map().span_to_string(span),
-                format!("{:?}", instance.def_id()),
-            )
+            let name = if pcx
+                .ecx
+                .tcx
+                .def_key(instance.def_id())
+                .disambiguated_data
+                .data
+                == DefPathData::ClosureExpr
+            {
+                "inside call to closure".to_string()
+            } else {
+                instance.to_string()
+            };
+            let span = self::source::pretty_src_path(span);
+            (name, span, format!("{:?}", instance.def_id()))
         })
         .collect();
     let rendered_breakpoints: Vec<String> = pcx
@@ -207,10 +205,9 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
 }
 
 pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -> Html<String> {
-    use horrorshow::Raw;
     let (mem, offset, rest) = if let Ok((_, mem, bytes)) = locals::print_ptr(
         &pcx.ecx,
-        Pointer::new(alloc_id, Size::from_bytes(offset)).with_default_tag().into(),
+        Pointer::new(alloc_id, Size::from_bytes(offset)).with_tag(miri::Tag::Untagged).into(),
         None,
     ) {
         if bytes * 2 > offset {

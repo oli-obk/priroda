@@ -1,9 +1,10 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::num::NonZeroU64;
 
-use crate::rustc::ty::TyCtxt;
+use rustc::ty::TyCtxt;
 use crate::syntax::source_map::Span;
-use miri::{Frame, Borrow};
+use miri::{Frame, Tag};
 
 use horrorshow::prelude::*;
 use syntect::easy::HighlightLines;
@@ -17,6 +18,29 @@ use self::rent_highlight_cache::*;
 lazy_static::lazy_static! {
     static ref SYNTAX_SET: SyntaxSet = SyntaxSet::load_defaults_nonewlines();
     static ref THEME_SET: ThemeSet = ThemeSet::load_defaults();
+
+    static ref RUST_SOURCE: regex::Regex = regex::Regex::new("/rustc/\\w+/").unwrap();
+    static ref STD_SRC: Option<String> = {
+        if let Ok(output) = std::process::Command::new("rustc").arg("--print").arg("sysroot").output() {
+            if let Ok(sysroot) = String::from_utf8(output.stdout) {
+                Some(sysroot.trim().to_string() + "/lib/rustlib/src/rust/")
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+}
+
+pub fn pretty_src_path(span: Span) -> String {
+    let span = format!("{:?}", span);
+    let span = RUST_SOURCE.replace(span.as_ref(), "<rust>/").to_string();
+    if let Some(std_src) = &*STD_SRC {
+        span.replace(std_src, "<rust>/")
+    } else {
+        span
+    }
 }
 
 thread_local! {
@@ -37,7 +61,7 @@ rental! {
     }
 }
 
-pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Borrow, u64>>) -> Box<RenderBox + Send> {
+pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Tag, NonZeroU64>>) -> Box<dyn RenderBox + Send> {
     let before_time = ::std::time::Instant::now();
 
     if frame.is_none() {
@@ -63,10 +87,10 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Borrow, u64>>) -> Box<Ren
     }
 
     let highlighted_sources = instr_spans
-        .iter()
+        .into_iter()
         .rev()
         .map(|sp| {
-            let (src, lo, hi) = match get_file_source_for_span(tcx, *sp) {
+            let (src, lo, hi) = match get_file_source_for_span(tcx, sp) {
                 Ok(res) => res,
                 Err(err) => return (format!("{:?}", sp), err),
             };
@@ -91,7 +115,7 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Borrow, u64>>) -> Box<Ren
                             highlighted
                         })
                     })
-                    .rent(|highlighted| (format!("{:?}", sp), mark_span(highlighted, lo, hi)))
+                    .rent(|highlighted| (pretty_src_path(sp), mark_span(highlighted, lo, hi)))
             })
         })
         .collect::<Vec<_>>();
@@ -109,7 +133,9 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Borrow, u64>>) -> Box<Ren
         pre {
             code(id="the_code", style=style) {
                 @ for (sp, source) in highlighted_sources {
-                    : sp; br;
+                    span(style = "color: aqua;") {
+                        :sp; br;
+                    }
                     : Raw(source);
                     br; br;
                 }
