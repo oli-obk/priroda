@@ -1,4 +1,11 @@
-#![feature(rustc_private, decl_macro, plugin, fnbox, try_blocks, proc_macro_hygiene)]
+#![feature(
+    rustc_private,
+    decl_macro,
+    plugin,
+    fnbox,
+    try_blocks,
+    proc_macro_hygiene
+)]
 #![feature(never_type)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
@@ -11,8 +18,8 @@ extern crate rustc_driver;
 extern crate rustc_interface;
 extern crate rustc_mir;
 
-extern crate regex;
 extern crate lazy_static;
+extern crate regex;
 #[macro_use]
 extern crate rental;
 extern crate miri;
@@ -43,9 +50,9 @@ use std::ops::FnOnce;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::mir;
 use rustc::ty::TyCtxt;
-use rustc::hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
 
 use promising_future::future_promise;
@@ -119,14 +126,21 @@ fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> InterpretCx<'a, 'tcx
         .entry_fn(LOCAL_CRATE)
         .expect("no main or start function found");
 
-    miri::create_ecx(tcx, main_id, miri::MiriConfig {
-        validate: true,
-        args: vec![],
-        seed: None,
-    }).unwrap()
+    miri::create_ecx(
+        tcx,
+        main_id,
+        miri::MiriConfig {
+            validate: true,
+            args: vec![],
+            seed: None,
+        },
+    )
+    .unwrap()
 }
 
-pub struct PrirodaSender(Mutex<::std::sync::mpsc::Sender<Box<dyn FnOnce(&mut PrirodaContext) + Send>>>);
+pub struct PrirodaSender(
+    Mutex<::std::sync::mpsc::Sender<Box<dyn FnOnce(&mut PrirodaContext) + Send>>>,
+);
 
 impl PrirodaSender {
     fn do_work<'r, T, F>(&self, f: F) -> Result<T, Html<String>>
@@ -235,15 +249,18 @@ fn server(sender: PrirodaSender) {
         .mount("/breakpoints", step::bp_routes::routes())
         .mount("/step", step::step_routes::routes())
         .mount("/watch", watch::routes())
-        .attach(rocket::fairing::AdHoc::on_launch("Priroda, because code has no privacy rights", |rocket| {
-            let config = rocket.config();
-            if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {
-                let addr = format!("http://{}:{}", config.address, config.port);
-                if open::that(&addr).is_err() {
-                    println!("open {} in your browser", addr);
+        .attach(rocket::fairing::AdHoc::on_launch(
+            "Priroda, because code has no privacy rights",
+            |rocket| {
+                let config = rocket.config();
+                if config.extras.get("spawn_browser") == Some(&Value::Boolean(true)) {
+                    let addr = format!("http://{}:{}", config.address, config.port);
+                    if open::that(&addr).is_err() {
+                        println!("open {} in your browser", addr);
+                    }
                 }
-            }
-        }))
+            },
+        ))
         .launch();
 }
 
@@ -300,7 +317,13 @@ fn main() {
                     struct PrirodaCompilerCalls {
                         step_count: Arc<Mutex<u128>>,
                         config: Arc<Mutex<Config>>,
-                        receiver: Arc<Mutex<std::sync::mpsc::Receiver<Box<dyn FnOnce(&mut PrirodaContext) + Send>>>>,
+                        receiver: Arc<
+                            Mutex<
+                                std::sync::mpsc::Receiver<
+                                    Box<dyn FnOnce(&mut PrirodaContext) + Send>,
+                                >,
+                            >,
+                        >,
                     }
 
                     impl rustc_driver::Callbacks for PrirodaCompilerCalls {
@@ -319,9 +342,10 @@ fn main() {
                             compiler.session().abort_if_errors();
 
                             compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
-
-                                let mut step_count =
-                                    self.step_count.lock().unwrap_or_else(|err| err.into_inner());
+                                let mut step_count = self
+                                    .step_count
+                                    .lock()
+                                    .unwrap_or_else(|err| err.into_inner());
                                 let mut config =
                                     self.config.lock().unwrap_or_else(|err| err.into_inner());
 
@@ -336,7 +360,10 @@ fn main() {
                                 for _ in 0..*pcx.step_count {
                                     match pcx.ecx.step() {
                                         Ok(true) => {}
-                                        res => panic!("Miri is not deterministic causing error {:?}", res),
+                                        res => panic!(
+                                            "Miri is not deterministic causing error {:?}",
+                                            res
+                                        ),
                                     }
                                 }
 
@@ -357,11 +384,16 @@ fn main() {
                         }
                     }
 
-                    rustc_driver::run_compiler(&*args, &mut PrirodaCompilerCalls {
-                        step_count,
-                        config,
-                        receiver,
-                    }, None, None)
+                    rustc_driver::run_compiler(
+                        &*args,
+                        &mut PrirodaCompilerCalls {
+                            step_count,
+                            config,
+                            receiver,
+                        },
+                        None,
+                        None,
+                    )
                 });
             })
             .join();

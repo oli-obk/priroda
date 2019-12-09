@@ -8,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use rustc::mir::*;
 use crate::step::LocalBreakpoints;
 use miri::{Frame, Tag};
+use rustc::mir::*;
 use std::fmt::{self, Debug, Write};
 use std::num::NonZeroU64;
 
