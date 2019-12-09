@@ -182,20 +182,21 @@ pub fn render_main_window(
 }
 
 pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
-    let allocs: Vec<_> = pcx
-        .ecx
-        .memory()
-        .alloc_map().iter(|values| values.filter_map(|(&id, (_kind, alloc))| {
-            alloc
-                .relocations
-                .values()
-                .find(|&&(_tag, reloc)| reloc == id)
-                .map(|_| id)
-        }).collect());
+    let allocs: Vec<_> = pcx.ecx.memory().alloc_map().iter(|values| {
+        values
+            .filter_map(|(&id, (_kind, alloc))| {
+                alloc
+                    .relocations
+                    .values()
+                    .find(|&&(_tag, reloc)| reloc == id)
+                    .map(|_| id)
+            })
+            .collect()
+    });
     template(
         pcx,
         format!("Allocations with pointers to Allocation {}", alloc_id),
-        html!{
+        html! {
             @for id in allocs {
                 a(href=format!("/ptr/{}", id)) { : format!("Allocation {}", id) }
                 br;
@@ -207,7 +208,9 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
 pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -> Html<String> {
     let (mem, offset, rest) = if let Ok((_, mem, bytes)) = locals::print_ptr(
         &pcx.ecx,
-        Pointer::new(alloc_id, Size::from_bytes(offset)).with_tag(miri::Tag::Untagged).into(),
+        Pointer::new(alloc_id, Size::from_bytes(offset))
+            .with_tag(miri::Tag::Untagged)
+            .into(),
         None,
     ) {
         if bytes * 2 > offset {
@@ -223,7 +226,7 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
     template(
         pcx,
         format!("Allocation {}", alloc_id),
-        html!{
+        html! {
             span(style="font-family: monospace") {
                 : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = rest)
             }
@@ -240,9 +243,11 @@ pub struct FlashString(String);
 impl<'a, 'r> ::rocket::request::FromRequest<'a, 'r> for FlashString {
     type Error = !;
     fn from_request(request: &'a rocket::Request<'r>) -> rocket::request::Outcome<Self, !> {
-        rocket::Outcome::Success(FlashString(Option::<rocket::request::FlashMessage>::from_request(request)?
-            .map(|flash| flash.msg().to_string())
-            .unwrap_or_else(String::new)))
+        rocket::Outcome::Success(FlashString(
+            Option::<rocket::request::FlashMessage>::from_request(request)?
+                .map(|flash| flash.msg().to_string())
+                .unwrap_or_else(String::new),
+        ))
     }
 }
 

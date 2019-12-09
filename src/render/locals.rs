@@ -8,8 +8,8 @@ use rustc::ty::{
 };
 
 use miri::{
-    Allocation, InterpResult, Frame, OpTy, Operand, Pointer,
-    Scalar, ScalarMaybeUndef, Stacks, Tag, Immediate,
+    Allocation, Frame, Immediate, InterpResult, OpTy, Operand, Pointer, Scalar, ScalarMaybeUndef,
+    Stacks, Tag,
 };
 
 use horrorshow::prelude::*;
@@ -44,10 +44,10 @@ pub fn render_locals<'a, 'tcx: 'a>(
             // > The type checker should prevent reading from a never-written local
             let op_ty = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if id == mir::RETURN_PLACE {
-                return_place.map(|p| {
-                    ecx.place_to_op(p).unwrap()
-                    }).ok_or(false)
-            } else {
+                    return_place
+                        .map(|p| ecx.place_to_op(p).unwrap())
+                        .ok_or(false)
+                } else {
                     ecx.access_local(frame, id, None).map_err(|_| false)
                 }
             })) {
@@ -58,14 +58,15 @@ pub fn render_locals<'a, 'tcx: 'a>(
             let (alloc, val, style) = match op_ty {
                 Err(false) => (None, "&lt;dead&gt;".to_owned(), "font-size: 0;"),
                 Err(true) => (None, "&lt;uninit&gt;".to_owned(), "color: darkmagenta;"),
-                Ok(op_ty) => {
-                    match print_operand(ecx, op_ty) {
-                        Ok((alloc, text)) => (alloc, text, ""),
-                        Err(()) => (None, "&lt;error&gt;".to_owned(), "color: red;"),
-                    }
-                }
+                Ok(op_ty) => match print_operand(ecx, op_ty) {
+                    Ok((alloc, text)) => (alloc, text, ""),
+                    Err(()) => (None, "&lt;error&gt;".to_owned(), "color: red;"),
+                },
             };
-            let ty = ecx.tcx.normalize_erasing_regions(ParamEnv::reveal_all(), local_decl.ty.subst(ecx.tcx.tcx, instance.substs));
+            let ty = ecx.tcx.normalize_erasing_regions(
+                ParamEnv::reveal_all(),
+                local_decl.ty.subst(ecx.tcx.tcx, instance.substs),
+            );
             (name, ty.to_string(), alloc, val, style)
         })
         .collect();
@@ -339,7 +340,12 @@ pub fn print_ptr(
     }
 }
 
-pub fn print_alloc(ptr_size: u64, ptr: Pointer<Tag>, alloc: &Allocation<Tag, Stacks>, size: Option<u64>) -> String {
+pub fn print_alloc(
+    ptr_size: u64,
+    ptr: Pointer<Tag>,
+    alloc: &Allocation<Tag, Stacks>,
+    size: Option<u64>,
+) -> String {
     use std::fmt::Write;
     let end = size
         .map(|s| s + ptr.offset.bytes())
@@ -365,8 +371,7 @@ pub fn print_alloc(ptr_size: u64, ptr: Pointer<Tag>, alloc: &Allocation<Tag, Sta
                 write!(&mut s, "{:02x}", alloc.bytes[i as usize] as usize).unwrap();
             } else {
                 let ub_chars = [
-                    '∅', '∆', '∇', '∓', '∞', '⊙', '⊠', '⊘', '⊗', '⊛', '⊝',
-                    '⊡', '⊠',
+                    '∅', '∆', '∇', '∓', '∞', '⊙', '⊠', '⊘', '⊗', '⊛', '⊝', '⊡', '⊠',
                 ];
                 let c1 = (ptr.alloc_id.0 * 769 + i as u64 * 5689) as usize % ub_chars.len();
                 let c2 = (ptr.alloc_id.0 * 997 + i as u64 * 7193) as usize % ub_chars.len();

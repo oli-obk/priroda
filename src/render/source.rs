@@ -2,9 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::num::NonZeroU64;
 
-use rustc::ty::TyCtxt;
 use crate::syntax::source_map::Span;
 use miri::{Frame, Tag};
+use rustc::ty::TyCtxt;
 
 use horrorshow::prelude::*;
 use syntect::easy::HighlightLines;
@@ -61,7 +61,10 @@ rental! {
     }
 }
 
-pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Tag, NonZeroU64>>) -> Box<dyn RenderBox + Send> {
+pub fn render_source(
+    tcx: TyCtxt,
+    frame: Option<&Frame<Tag, NonZeroU64>>,
+) -> Box<dyn RenderBox + Send> {
     let before_time = ::std::time::Instant::now();
 
     if frame.is_none() {
@@ -124,7 +127,10 @@ pub fn render_source(tcx: TyCtxt, frame: Option<&Frame<Tag, NonZeroU64>>) -> Box
     println!("s: {:?}", after_time - before_time);
 
     let style = if let Some(bg_color) = THEME_SET.themes["Solarized (dark)"].settings.background {
-        format!("background-color: #{:02x}{:02x}{:02x}; display: block;", bg_color.r, bg_color.g, bg_color.b)
+        format!(
+            "background-color: #{:02x}{:02x}{:02x}; display: block;",
+            bg_color.r, bg_color.g, bg_color.b
+        )
     } else {
         String::new()
     };
@@ -166,7 +172,13 @@ fn get_file_source_for_span(tcx: TyCtxt, sp: Span) -> Result<(String, usize, usi
 
 fn syntax_highlight<'a, 's>(src: &'s str) -> Vec<(Style, &'s str)> {
     let theme = &THEME_SET.themes["Solarized (dark)"];
-    let mut h = HighlightLines::new(&SYNTAX_SET.find_syntax_by_extension("rs").unwrap().to_owned(), theme);
+    let mut h = HighlightLines::new(
+        &SYNTAX_SET
+            .find_syntax_by_extension("rs")
+            .unwrap()
+            .to_owned(),
+        theme,
+    );
 
     let mut highlighted = Vec::new();
     for line in LinesWithEndings::from(src) {

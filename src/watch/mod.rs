@@ -60,7 +60,10 @@ enum AllocTracePoint {
     Deallocated,
 }
 
-fn eq_alloc(a: &Allocation<miri::Tag, miri::Stacks>, b: &Allocation<miri::Tag, miri::Stacks>) -> bool {
+fn eq_alloc(
+    a: &Allocation<miri::Tag, miri::Stacks>,
+    b: &Allocation<miri::Tag, miri::Stacks>,
+) -> bool {
     let Allocation {
         bytes: a_bytes,
         relocations: a_relocs,
@@ -77,11 +80,11 @@ fn eq_alloc(a: &Allocation<miri::Tag, miri::Stacks>, b: &Allocation<miri::Tag, m
         mutability: b_mut,
         extra: _,
     } = b;
-    a_bytes == b_bytes &&
-    a_relocs == b_relocs &&
-    a_undef == b_undef &&
-    a_align == b_align &&
-    a_mut == b_mut
+    a_bytes == b_bytes
+        && a_relocs == b_relocs
+        && a_undef == b_undef
+        && a_align == b_align
+        && a_mut == b_mut
 }
 
 pub fn step_callback(pcx: &mut PrirodaContext) {
