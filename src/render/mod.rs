@@ -105,7 +105,7 @@ pub fn render_main_window(
     let rendered_source = source::render_source(pcx.ecx.tcx.tcx, frame);
 
     let mir_graph = frame.map(|frame| {
-        graphviz::render_html(frame, pcx.config.bptree.for_def_id(frame.instance.def_id()))
+        graphviz::render_html(pcx.ecx.tcx.tcx, frame, pcx.config.bptree.for_def_id(frame.instance.def_id()))
     });
 
     let filename = pcx
@@ -182,11 +182,11 @@ pub fn render_main_window(
 }
 
 pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
-    let allocs: Vec<_> = pcx.ecx.memory().alloc_map().iter(|values| {
+    let allocs: Vec<_> = pcx.ecx.memory.alloc_map().iter(|values| {
         values
             .filter_map(|(&id, (_kind, alloc))| {
                 alloc
-                    .relocations
+                    .relocations()
                     .values()
                     .find(|&&(_tag, reloc)| reloc == id)
                     .map(|_| id)

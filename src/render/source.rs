@@ -1,9 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::num::NonZeroU64;
 
 use crate::syntax::source_map::Span;
-use miri::{Frame, Tag};
+use miri::{Frame, FrameData, Tag};
 use rustc::ty::TyCtxt;
 
 use horrorshow::prelude::*;
@@ -63,7 +62,7 @@ rental! {
 
 pub fn render_source(
     tcx: TyCtxt,
-    frame: Option<&Frame<Tag, NonZeroU64>>,
+    frame: Option<&Frame<Tag, FrameData>>,
 ) -> Box<dyn RenderBox + Send> {
     let before_time = ::std::time::Instant::now();
 
@@ -71,13 +70,17 @@ pub fn render_source(
         return Box::new(FnRenderer::new(|_| {}));
     }
     let frame = frame.unwrap();
-    let mut instr_spans = vec![if frame.stmt == frame.mir[frame.block].statements.len() {
-        frame.mir[frame.block].terminator().source_info.span
+    let mut instr_spans = if let Some(block) = frame.block {
+        if frame.stmt == frame.body[block].statements.len() {
+            vec![frame.body[block].terminator().source_info.span]
+        } else {
+            vec![frame.body[block].statements[frame.stmt]
+                .source_info
+                .span]
+        }
     } else {
-        frame.mir[frame.block].statements[frame.stmt]
-            .source_info
-            .span
-    }];
+        vec![frame.body.span]
+    };
     // Get the original macro caller
     while let Some(span) = instr_spans
         .last()

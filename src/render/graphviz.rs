@@ -9,22 +9,32 @@
 // except according to those terms.
 
 use crate::step::LocalBreakpoints;
-use miri::{Frame, Tag};
+use miri::{Frame, FrameData, Tag};
 use rustc::mir::*;
+use rustc::ty::TyCtxt;
 use std::fmt::{self, Debug, Write};
-use std::num::NonZeroU64;
 
-pub fn render_html(frame: &Frame<Tag, NonZeroU64>, breakpoints: LocalBreakpoints) -> String {
+pub fn render_html<'tcx>(tcx: TyCtxt<'tcx>, frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakpoints) -> String {
     let mut rendered = String::new();
-    render_mir_svg(&frame.mir, breakpoints, &mut rendered, None).unwrap();
-    for (i, promoted) in frame.mir.promoted.iter_enumerated() {
+
+    render_mir_svg(&frame.body, breakpoints, &mut rendered, None).unwrap();
+
+    for (i, promoted) in tcx.promoted_mir(frame.instance.def_id()).iter_enumerated() {
         println!("promoted: {:?}", i);
         render_mir_svg(promoted, breakpoints, &mut rendered, Some(i.index())).unwrap();
     }
+
+    let block = if let Some(block) = frame.block {
+        block
+    } else {
+        rendered.push_str("<div style='color: red;'>Unwinding</div>");
+        return rendered;
+    };
+
     let (bb, stmt) = {
-        let blck = &frame.mir.basic_blocks()[frame.block];
+        let blck = &frame.body.basic_blocks()[block];
         (
-            frame.block.index() + 1,
+            block.index() + 1,
             if frame.stmt == blck.statements.len() {
                 if blck.statements.is_empty() {
                     6
@@ -38,7 +48,7 @@ pub fn render_html(frame: &Frame<Tag, NonZeroU64>, breakpoints: LocalBreakpoints
         )
     };
     let edge_colors = {
-        let blck = &frame.mir.basic_blocks()[frame.block];
+        let blck = &frame.body.basic_blocks()[block];
         let (targets, unwind) = if frame.stmt == blck.statements.len() {
             use rustc::mir::TerminatorKind::*;
             match blck.terminator().kind {
@@ -67,11 +77,11 @@ pub fn render_html(frame: &Frame<Tag, NonZeroU64>, breakpoints: LocalBreakpoints
             "let edge_colors = {{{}}};",
             targets
                 .into_iter()
-                .map(|target| (frame.block, target, "green"))
+                .map(|target| (block, target, "green"))
                 .chain(
                     unwind
                         .into_iter()
-                        .map(|target| (frame.block, target, "red"))
+                        .map(|target| (block, target, "red"))
                 )
                 .map(|(from, to, color)| format!(
                     "'bb{}->bb{}':'{}'",
@@ -178,7 +188,7 @@ fn write_node_label<W: Write>(
     if !data.statements.is_empty() {
         write!(w, r#"<tr><td align="left" balign="left">"#)?;
         for (stmt_index, statement) in data.statements.iter().enumerate() {
-            if breakpoints.breakpoint_exists(block, stmt_index) {
+            if breakpoints.breakpoint_exists(Some(block), stmt_index) {
                 write!(w, "+ ")?;
             } else {
                 write!(w, "&nbsp; ")?;
