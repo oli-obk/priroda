@@ -7,7 +7,7 @@ use rustc::ty::{self, Instance, InstanceDef, ParamEnv};
 use crate::*;
 
 pub(super) fn step_callback(pcx: &mut PrirodaContext) {
-    let ecx = &mut pcx.ecx;
+    let ecx = &pcx.ecx;
     let traces = &mut pcx.traces;
 
     let stack_trace = ecx
@@ -53,7 +53,7 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
 }
 
 fn instance_for_call_operand<'a, 'tcx: 'a>(
-    ecx: &mut InterpCx<'tcx>,
+    ecx: &InterpCx<'tcx>,
     func: &'tcx rustc::mir::Operand,
 ) -> Option<Instance<'tcx>> {
     let res: ::miri::InterpResult<Instance> = try {
@@ -90,7 +90,7 @@ fn insert_stack_traces_for_instance<'a, 'tcx: 'a>(
     instance: Instance<'tcx>,
     args: Option<&[mir::Operand<'tcx>]>,
 ) {
-    let ecx = &mut pcx.ecx;
+    let ecx = &pcx.ecx;
     let traces = &mut pcx.traces;
 
     let item_path = ecx.tcx.def_path_str(instance.def_id());

@@ -88,7 +88,7 @@ fn eq_alloc(
 
 pub fn step_callback(pcx: &mut PrirodaContext) {
     {
-        let ecx = &mut pcx.ecx;
+        let ecx = &pcx.ecx;
         let traces = &mut pcx.traces;
 
         // Collect alloc traces
