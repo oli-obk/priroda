@@ -86,7 +86,7 @@ impl<'a> LocalBreakpoints<'a> {
         } else {
             // Unwinding, but no cleanup for this frame
             // FIXME make this configurable
-            true
+            false
         }
     }
 }

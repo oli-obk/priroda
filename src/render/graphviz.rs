@@ -11,18 +11,12 @@
 use crate::step::LocalBreakpoints;
 use miri::{Frame, FrameData, Tag};
 use rustc::mir::*;
-use rustc::ty::TyCtxt;
 use std::fmt::{self, Debug, Write};
 
-pub fn render_html<'tcx>(tcx: TyCtxt<'tcx>, frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakpoints) -> String {
+pub fn render_html<'tcx>(frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakpoints) -> String {
     let mut rendered = String::new();
 
     render_mir_svg(&frame.body, breakpoints, &mut rendered, None).unwrap();
-
-    for (i, promoted) in tcx.promoted_mir(frame.instance.def_id()).iter_enumerated() {
-        println!("promoted: {:?}", i);
-        render_mir_svg(promoted, breakpoints, &mut rendered, Some(i.index())).unwrap();
-    }
 
     let block = if let Some(block) = frame.block {
         block

@@ -299,8 +299,12 @@ pub fn print_operand<'a, 'tcx: 'a>(
             let size: u64 = op_ty.layout.size.bytes();
             if place.meta.is_none() {
                 let ptr = place.to_ref().to_scalar().unwrap();
-                let (alloc, txt, _len) = print_ptr(ecx, ptr.assert_ptr(), Some(size))?;
-                (alloc, txt)
+                if ptr.is_ptr() {
+                    let (alloc, txt, _len) = print_ptr(ecx, ptr.assert_ptr(), Some(size))?;
+                    (alloc, txt)
+                } else {
+                    (None, format!("{:?}", ptr))
+                }
             } else {
                 (None, format!("{:?}", place)) // FIXME better printing for unsized locals
             }

@@ -105,7 +105,7 @@ pub fn render_main_window(
     let rendered_source = source::render_source(pcx.ecx.tcx.tcx, frame);
 
     let mir_graph = frame.map(|frame| {
-        graphviz::render_html(pcx.ecx.tcx.tcx, frame, pcx.config.bptree.for_def_id(frame.instance.def_id()))
+        graphviz::render_html(frame, pcx.config.bptree.for_def_id(frame.instance.def_id()))
     });
 
     let filename = pcx
