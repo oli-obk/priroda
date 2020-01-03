@@ -7,7 +7,7 @@ use rustc::ty::{self, Instance, InstanceDef, ParamEnv};
 use crate::*;
 
 pub(super) fn step_callback(pcx: &mut PrirodaContext) {
-    let ecx = &mut pcx.ecx;
+    let ecx = &pcx.ecx;
     let traces = &mut pcx.traces;
 
     let stack_trace = ecx
@@ -17,20 +17,27 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
         .collect::<Vec<_>>();
     insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);
 
+    let block = if let Some(block) = ecx.frame().block {
+        block
+    } else {
+        return; // Unwinding, but no cleanup for current frame needed
+    };
+
     let (stmt, blck) = {
         let frame = ecx.frame();
-        let blck = &frame.mir.basic_blocks()[frame.block];
+        let blck = &frame.body.basic_blocks()[block];
         (frame.stmt, blck)
     };
     if stmt == blck.statements.len() {
         use rustc::mir::TerminatorKind::*;
         match &blck.terminator().kind {
             Call { func, args, .. } => {
-                let instance = instance_for_call_operand(ecx, func);
-                insert_stack_traces_for_instance(pcx, stack_trace, instance, Some(args));
+                if let Some(instance) = instance_for_call_operand(ecx, &func) {
+                    insert_stack_traces_for_instance(pcx, stack_trace, instance, Some(&args));
+                }
             }
             Drop { location, .. } => {
-                let location_ty = location.ty(ecx.frame().mir, ecx.tcx.tcx).ty;
+                let location_ty = location.ty(ecx.frame().body, ecx.tcx.tcx).ty;
                 let location_ty = ecx.tcx.subst_and_normalize_erasing_regions(
                     ecx.frame().instance.substs,
                     ParamEnv::reveal_all(),
@@ -46,16 +53,20 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
 }
 
 fn instance_for_call_operand<'a, 'tcx: 'a>(
-    ecx: &mut InterpretCx<'a, 'tcx>,
+    ecx: &InterpCx<'tcx>,
     func: &'tcx rustc::mir::Operand,
-) -> Instance<'tcx> {
+) -> Option<Instance<'tcx>> {
     let res: ::miri::InterpResult<Instance> = try {
         let func = ecx.eval_operand(func, None)?;
 
-        match func.layout.ty.sty {
+        match func.layout.ty.kind {
             ty::FnPtr(_) => {
-                let fn_ptr = ecx.read_scalar(func)?.to_ptr()?;
-                ecx.memory().get_fn(fn_ptr)?
+                let fn_ptr = ecx.read_scalar(func)?.not_undef()?;
+                if let Ok(instance) = ecx.memory.get_fn(fn_ptr)?.as_instance() {
+                    instance
+                } else {
+                    return None;
+                }
             }
             ty::FnDef(def_id, substs) => {
                 let substs = ecx.tcx.subst_and_normalize_erasing_regions(
@@ -66,13 +77,11 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
                 ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), def_id, substs).unwrap()
             }
             _ => {
-                let msg = format!("can't handle callee of type {:?}", func.layout.ty);
-                (err!(Unimplemented(msg)) as ::miri::InterpResult<_>)?;
-                unreachable!()
+                panic!("can't handle callee of type {:?}", func.layout.ty);
             }
         }
     };
-    res.unwrap()
+    Some(res.unwrap())
 }
 
 fn insert_stack_traces_for_instance<'a, 'tcx: 'a>(
@@ -81,7 +90,7 @@ fn insert_stack_traces_for_instance<'a, 'tcx: 'a>(
     instance: Instance<'tcx>,
     args: Option<&[mir::Operand<'tcx>]>,
 ) {
-    let ecx = &mut pcx.ecx;
+    let ecx = &pcx.ecx;
     let traces = &mut pcx.traces;
 
     let item_path = ecx.tcx.def_path_str(instance.def_id());
@@ -90,19 +99,20 @@ fn insert_stack_traces_for_instance<'a, 'tcx: 'a>(
     insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);
 
     let _: ::miri::InterpResult = try {
-        let args = args
-            .ok_or(miri::InterpError::AssumptionNotHeld)?
-            .into_iter()
-            .map(|op| ecx.eval_operand(op, None))
-            .collect::<Result<Vec<_>, _>>()?;
+        let args = if let Some(args) = args {
+            args.into_iter().map(|op| ecx.eval_operand(op, None)).collect::<Result<Vec<_>, _>>()?
+        } else {
+            return;
+        };
+
         match &item_path[..] {
             "alloc::alloc::::__rust_alloc" | "alloc::alloc::::__rust_alloc_zeroed" => {
-                let size = ecx.read_scalar(args[0])?.to_usize(&ecx.tcx.tcx)?;
+                let size = ecx.read_scalar(args[0])?.to_machine_usize(&ecx.tcx.tcx)?;
                 insert_stack_trace(&mut traces.stack_traces_mem, stack_trace, size as u128);
             }
             "alloc::alloc::::__rust_realloc" => {
-                let old_size = ecx.read_scalar(args[1])?.to_usize(&ecx.tcx.tcx)?;
-                let new_size = ecx.read_scalar(args[3])?.to_usize(&ecx.tcx.tcx)?;
+                let old_size = ecx.read_scalar(args[1])?.to_machine_usize(&ecx.tcx.tcx)?;
+                let new_size = ecx.read_scalar(args[3])?.to_machine_usize(&ecx.tcx.tcx)?;
                 if new_size > old_size {
                     insert_stack_trace(
                         &mut traces.stack_traces_mem,
@@ -151,7 +161,7 @@ pub(super) fn show(pcx: &PrirodaContext, buf: &mut impl Write) -> io::Result<()>
 }
 
 fn create_flame_graph<'a, 'tcx: 'a>(
-    ecx: &InterpretCx<'a, 'tcx>,
+    ecx: &InterpCx<'tcx>,
     mut buf: impl Write,
     traces: &[(Vec<(Instance<'tcx>,)>, u128)],
     name: &str,
@@ -229,7 +239,7 @@ fn create_flame_graph<'a, 'tcx: 'a>(
 }
 
 fn print_stack_traces<'a, 'tcx: 'a>(
-    ecx: &InterpretCx<'a, 'tcx>,
+    ecx: &InterpCx<'tcx>,
     mut buf: impl Write,
     traces: &[(Vec<(Instance<'tcx>,)>, u128)],
 ) -> ::std::fmt::Result {

@@ -1,12 +1,12 @@
 use rustc::hir::def_id::{CrateNum, DefId, DefIndex};
 use rustc::mir;
-use rustc_data_structures::indexed_vec::Idx;
+use rustc_index::vec::Idx;
 use std::collections::{HashMap, HashSet};
 use std::iter::Iterator;
 
 use serde::de::{Deserialize, Deserializer, Error as SerdeError};
 
-use crate::{InterpretCx, PrirodaContext};
+use crate::{InterpCx, PrirodaContext};
 
 pub enum ShouldContinue {
     Continue,
@@ -59,7 +59,7 @@ impl BreakpointTree {
         }
     }
 
-    pub fn is_at_breakpoint(&self, ecx: &InterpretCx) -> bool {
+    pub fn is_at_breakpoint(&self, ecx: &InterpCx) -> bool {
         let frame = ecx.frame();
         self.for_def_id(frame.instance.def_id())
             .breakpoint_exists(frame.block, frame.stmt)
@@ -77,17 +77,23 @@ pub enum LocalBreakpoints<'a> {
 }
 
 impl<'a> LocalBreakpoints<'a> {
-    pub fn breakpoint_exists(self, bb: mir::BasicBlock, stmt: usize) -> bool {
-        match self {
-            LocalBreakpoints::NoBp => false,
-            LocalBreakpoints::SomeBps(bps) => bps.iter().any(|bp| bp.1 == bb && bp.2 == stmt),
+    pub fn breakpoint_exists(self, bb: Option<mir::BasicBlock>, stmt: usize) -> bool {
+        if let Some(bb) = bb {
+            match self {
+                LocalBreakpoints::NoBp => false,
+                LocalBreakpoints::SomeBps(bps) => bps.iter().any(|bp| bp.1 == bb && bp.2 == stmt),
+            }
+        } else {
+            // Unwinding, but no cleanup for this frame
+            // FIXME make this configurable
+            false
         }
     }
 }
 
 pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> String
 where
-    F: Fn(&InterpretCx) -> ShouldContinue,
+    F: Fn(&InterpCx) -> ShouldContinue,
 {
     let mut message = None;
     loop {
@@ -100,12 +106,17 @@ where
                 crate::watch::step_callback(pcx);
 
                 if let Some(frame) = pcx.ecx.stack().last() {
-                    let blck = &frame.mir.basic_blocks()[frame.block];
-                    if frame.stmt != blck.statements.len()
-                        && crate::should_hide_stmt(&blck.statements[frame.stmt])
-                        && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx)
-                    {
-                        continue;
+                    if let Some(block) = frame.block {
+                        let blck = &frame.body.basic_blocks()[block];
+                        if frame.stmt != blck.statements.len()
+                            && crate::should_hide_stmt(&blck.statements[frame.stmt])
+                            && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx)
+                        {
+                            continue;
+                        }
+                    } else {
+                        // Unwinding, but no cleanup for this frame
+                        // FIXME make step behaviour configurable
                     }
                 }
                 if let ShouldContinue::Stop = continue_while(&pcx.ecx) {
@@ -128,13 +139,19 @@ where
     message.unwrap_or_else(String::new)
 }
 
-pub fn is_ret(ecx: &InterpretCx) -> bool {
-    if let Some(stack) = ecx.stack().last() {
-        let basic_block = &stack.mir.basic_blocks()[stack.block];
+pub fn is_ret(ecx: &InterpCx) -> bool {
+    if let Some(frame) = ecx.stack().last() {
+        if let Some(block) = frame.block {
+            let basic_block = &frame.body.basic_blocks()[block];
 
-        match basic_block.terminator().kind {
-            rustc::mir::TerminatorKind::Return => stack.stmt >= basic_block.statements.len(),
-            _ => false,
+            match basic_block.terminator().kind {
+                rustc::mir::TerminatorKind::Return | rustc::mir::TerminatorKind::Resume => {
+                    frame.stmt >= basic_block.statements.len()
+                }
+                _ => false,
+            }
+        } else {
+            true // Unwinding, but no cleanup necessary for current frame
         }
     } else {
         true
@@ -271,8 +288,12 @@ pub mod bp_routes {
 
     action_route!(add_here: "/add_here", |pcx| {
         let frame = pcx.ecx.frame();
-        pcx.config.bptree.add_breakpoint(Breakpoint(frame.instance.def_id(), frame.block, frame.stmt));
-        format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), frame.block.index(), frame.stmt)
+        if let Some(block) = frame.block {
+            pcx.config.bptree.add_breakpoint(Breakpoint(frame.instance.def_id(), block, frame.stmt));
+            format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), block.index(), frame.stmt)
+        } else {
+            format!("Can't set breakpoint for unwinding without cleanup yet")
+        }
     });
 
     action_route!(add: "/add/<path..>", |pcx, path: PathBuf| {

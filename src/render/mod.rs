@@ -182,11 +182,11 @@ pub fn render_main_window(
 }
 
 pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
-    let allocs: Vec<_> = pcx.ecx.memory().alloc_map().iter(|values| {
+    let allocs: Vec<_> = pcx.ecx.memory.alloc_map().iter(|values| {
         values
             .filter_map(|(&id, (_kind, alloc))| {
                 alloc
-                    .relocations
+                    .relocations()
                     .values()
                     .find(|&&(_tag, reloc)| reloc == id)
                     .map(|_| id)

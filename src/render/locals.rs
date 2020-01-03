@@ -1,6 +1,4 @@
-use std::num::NonZeroU64;
-
-use rustc::mir::{self, interpret::InterpError};
+use rustc::mir::{self, interpret::{InterpError, UndefinedBehaviorInfo}};
 use rustc::ty::{
     layout::{Abi, Size},
     subst::Subst,
@@ -8,35 +6,40 @@ use rustc::ty::{
 };
 
 use miri::{
-    Allocation, Frame, Immediate, InterpResult, OpTy, Operand, Pointer, Scalar, ScalarMaybeUndef,
-    Stacks, Tag,
+    Allocation, AllocExtra, Frame, Immediate, InterpResult, OpTy, Operand, Pointer, Scalar,
+    ScalarMaybeUndef, Tag,
 };
 
 use horrorshow::prelude::*;
 use horrorshow::Template;
 
-use crate::InterpretCx;
+use crate::InterpCx;
 
-pub fn render_locals<'a, 'tcx: 'a>(
-    ecx: &InterpretCx<'a, 'tcx>,
-    frame: &Frame<'tcx, 'tcx, Tag, NonZeroU64>,
+pub fn render_locals<'tcx>(
+    ecx: &InterpCx<'tcx>,
+    frame: &Frame<'tcx, 'tcx, Tag, miri::FrameData<'tcx>>,
 ) -> String {
     let &Frame {
-        ref mir,
+        ref body,
         ref return_place,
         ref instance,
         ..
     } = frame;
 
     //               name    ty      alloc        val     style
-    let locals: Vec<(String, String, Option<u64>, String, &str)> = mir
+    let locals: Vec<(String, String, Option<u64>, String, &str)> = body
         .local_decls
         .iter_enumerated()
         .map(|(id, local_decl)| {
-            let name = local_decl
-                .name
-                .map(|n| n.as_str().to_string())
-                .unwrap_or_else(String::new);
+            let name = body.var_debug_info.iter().find(|var_debug_info| {
+                if var_debug_info.place.projection.is_empty() {
+                    var_debug_info.place.base == mir::PlaceBase::Local(id)
+                } else {
+                    false
+                }
+            }).map(|var_debug_info| var_debug_info
+                .name.as_str().to_string()
+            ).unwrap_or_else(String::new);
 
             // FIXME Don't panic when trying to read from uninit variable.
             // Panic message:
@@ -72,9 +75,9 @@ pub fn render_locals<'a, 'tcx: 'a>(
         .collect();
 
     let (arg_count, var_count, tmp_count) = (
-        mir.args_iter().count(),
-        mir.vars_iter().count(),
-        mir.temps_iter().count(),
+        body.args_iter().count(),
+        body.vars_iter().count(),
+        body.temps_iter().count(),
     );
 
     (html! {
@@ -138,21 +141,22 @@ fn print_scalar(val: Scalar<miri::Tag>) -> String {
     }
 }
 
-fn pp_operand<'a, 'tcx: 'a>(
-    ecx: &InterpretCx<'a, 'tcx>,
+fn pp_operand<'tcx>(
+    ecx: &InterpCx<'tcx>,
     op_ty: OpTy<'tcx, miri::Tag>,
 ) -> InterpResult<'tcx, String> {
-    match op_ty.layout.ty.sty {
+    let err = || InterpError::UndefinedBehavior(UndefinedBehaviorInfo::Ub(String::new()));
+    match op_ty.layout.ty.kind {
         TyKind::RawPtr(TypeAndMut {
             ty: &TyS {
-                sty: TyKind::Str, ..
+                kind: TyKind::Str, ..
             },
             ..
         })
         | TyKind::Ref(
             _,
             &TyS {
-                sty: TyKind::Str, ..
+                kind: TyKind::Str, ..
             },
             _,
         ) => {
@@ -162,13 +166,12 @@ fn pp_operand<'a, 'tcx: 'a>(
                     ScalarMaybeUndef::Scalar(Scalar::Raw { data: len, .. }),
                 ) = val
                 {
-                    if let Ok(allocation) = ecx.memory().get(ptr.alloc_id) {
+                    if let Ok(allocation) = ecx.memory.get_raw(ptr.alloc_id) {
                         let offset = ptr.offset.bytes();
-                        if (offset as u128) < allocation.bytes.len() as u128 {
-                            let alloc_bytes = &allocation.bytes[offset as usize
-                                ..(offset as usize)
-                                    .checked_add(len as usize)
-                                    .ok_or(InterpError::AssumptionNotHeld)?];
+                        if (offset as u128) < allocation.len() as u128 {
+                            let alloc_bytes = &allocation.inspect_with_undef_and_ptr_outside_interpreter(
+                                offset as usize .. (offset as usize).checked_add(len as usize).ok_or(err())?,
+                            );
                             let s = String::from_utf8_lossy(alloc_bytes);
                             return Ok(format!("\"{}\"", s));
                         }
@@ -178,7 +181,7 @@ fn pp_operand<'a, 'tcx: 'a>(
         }
         TyKind::Adt(adt_def, _substs) => {
             if let Operand::Immediate(Immediate::Scalar(ScalarMaybeUndef::Undef)) = *op_ty {
-                Err(InterpError::AssumptionNotHeld)?;
+                Err(err())?;
             }
 
             let variant = ecx.read_discriminant(op_ty)?.1;
@@ -235,25 +238,25 @@ fn pp_operand<'a, 'tcx: 'a>(
     }
 
     if op_ty.layout.size.bytes() == 0 {
-        Err(InterpError::AssumptionNotHeld)?;
+        Err(err())?;
     }
     if let Abi::Scalar(_) = op_ty.layout.abi {
     } else {
-        Err(InterpError::AssumptionNotHeld)?;
+        Err(err())?;
     }
     let scalar = ecx.read_scalar(op_ty)?;
     if let ScalarMaybeUndef::Scalar(Scalar::Ptr(_)) = &scalar {
         return Ok(print_scalar_maybe_undef(scalar)); // If the value is a ptr, print it
     }
     let bits = scalar.to_bits(op_ty.layout.size)?;
-    match op_ty.layout.ty.sty {
+    match op_ty.layout.ty.kind {
         TyKind::Bool => {
             if bits == 0 {
                 Ok("false".to_string())
             } else if bits == 1 {
                 Ok("true".to_string())
             } else {
-                Err(InterpError::AssumptionNotHeld.into())
+                Err(err().into())
             }
         }
         TyKind::Char if bits < ::std::char::MAX as u128 => {
@@ -261,7 +264,7 @@ fn pp_operand<'a, 'tcx: 'a>(
             if chr.is_ascii() {
                 Ok(format!("'{}'", chr))
             } else {
-                Err(InterpError::AssumptionNotHeld.into())
+                Err(err().into())
             }
         }
         TyKind::Uint(_) => Ok(format!("{0}", bits)),
@@ -278,15 +281,15 @@ fn pp_operand<'a, 'tcx: 'a>(
                 F64 if bits < ::std::u64::MAX as u128 => {
                     Ok(format!("{}", <f64>::from_bits(bits as u64)))
                 }
-                _ => Err(InterpError::AssumptionNotHeld.into()),
+                _ => Err(err().into()),
             }
         }
-        _ => Err(InterpError::AssumptionNotHeld.into()),
+        _ => Err(err().into()),
     }
 }
 
 pub fn print_operand<'a, 'tcx: 'a>(
-    ecx: &InterpretCx<'a, 'tcx>,
+    ecx: &InterpCx<'tcx>,
     op_ty: OpTy<'tcx, miri::Tag>,
 ) -> Result<(Option<u64>, String), ()> {
     let pretty = pp_operand(ecx, op_ty);
@@ -295,9 +298,13 @@ pub fn print_operand<'a, 'tcx: 'a>(
         Operand::Indirect(place) => {
             let size: u64 = op_ty.layout.size.bytes();
             if place.meta.is_none() {
-                let ptr = place.to_scalar_ptr_align().0;
-                let (alloc, txt, _len) = print_ptr(ecx, ptr, Some(size))?;
-                (alloc, txt)
+                let ptr = place.to_ref().to_scalar().unwrap();
+                if ptr.is_ptr() {
+                    let (alloc, txt, _len) = print_ptr(ecx, ptr.assert_ptr(), Some(size))?;
+                    (alloc, txt)
+                } else {
+                    (None, format!("{:?}", ptr))
+                }
             } else {
                 (None, format!("{:?}", place)) // FIXME better printing for unsized locals
             }
@@ -321,15 +328,14 @@ pub fn print_operand<'a, 'tcx: 'a>(
 }
 
 pub fn print_ptr(
-    ecx: &InterpretCx,
-    ptr: Scalar<Tag>,
+    ecx: &InterpCx,
+    ptr: Pointer<Tag>,
     size: Option<u64>,
 ) -> Result<(Option<u64>, String, u64), ()> {
-    let ptr = ptr.to_ptr().map_err(|_| ())?;
-    match (ecx.memory().get(ptr.alloc_id), ecx.memory().get_fn(ptr)) {
+    match (ecx.memory.get_raw(ptr.alloc_id), ecx.memory.get_fn(ptr.into())) {
         (Ok(alloc), Err(_)) => {
             let s = print_alloc(ecx.tcx.data_layout.pointer_size.bytes(), ptr, alloc, size);
-            Ok((Some(ptr.alloc_id.0), s, alloc.bytes.len() as u64))
+            Ok((Some(ptr.alloc_id.0), s, alloc.len() as u64))
         }
         (Err(_), Ok(_)) => {
             // FIXME: print function name
@@ -343,17 +349,17 @@ pub fn print_ptr(
 pub fn print_alloc(
     ptr_size: u64,
     ptr: Pointer<Tag>,
-    alloc: &Allocation<Tag, Stacks>,
+    alloc: &Allocation<Tag, AllocExtra>,
     size: Option<u64>,
 ) -> String {
     use std::fmt::Write;
     let end = size
         .map(|s| s + ptr.offset.bytes())
-        .unwrap_or(alloc.bytes.len() as u64);
+        .unwrap_or(alloc.len() as u64);
     let mut s = String::new();
     let mut i = ptr.offset.bytes();
     while i < end {
-        if let Some((_tag, reloc)) = alloc.relocations.get(&Size::from_bytes(i)) {
+        if let Some((_tag, reloc)) = alloc.relocations().get(&Size::from_bytes(i)) {
             i += ptr_size;
             write!(&mut s,
                 "<a style=\"text-decoration: none\" href=\"/ptr/{alloc}/{offset}\">┠{nil:─<wdt$}┨</a>",
@@ -364,11 +370,11 @@ pub fn print_alloc(
             ).unwrap();
         } else {
             if alloc
-                .undef_mask
+                .undef_mask()
                 .is_range_defined(Size::from_bytes(i), Size::from_bytes(i + 1))
                 .is_ok()
             {
-                write!(&mut s, "{:02x}", alloc.bytes[i as usize] as usize).unwrap();
+                write!(&mut s, "{:02x}", alloc.inspect_with_undef_and_ptr_outside_interpreter(i as usize .. i as usize + 1)[0]).unwrap();
             } else {
                 let ub_chars = [
                     '∅', '∆', '∇', '∓', '∞', '⊙', '⊠', '⊘', '⊗', '⊛', '⊝', '⊡', '⊠',

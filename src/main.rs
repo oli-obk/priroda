@@ -2,7 +2,6 @@
     rustc_private,
     decl_macro,
     plugin,
-    fnbox,
     try_blocks,
     proc_macro_hygiene
 )]
@@ -11,10 +10,10 @@
 #![recursion_limit = "5000"]
 
 extern crate syntax;
-#[macro_use(err)]
 extern crate rustc;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
+extern crate rustc_index;
 extern crate rustc_interface;
 extern crate rustc_mir;
 
@@ -53,6 +52,7 @@ use std::sync::{Arc, Mutex};
 use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::mir;
 use rustc::ty::TyCtxt;
+use rustc_driver::Compilation;
 use rustc_interface::interface;
 
 use promising_future::future_promise;
@@ -73,10 +73,10 @@ fn should_hide_stmt(stmt: &mir::Statement) -> bool {
     }
 }
 
-type InterpretCx<'a, 'tcx> = miri::InterpretCx<'a, 'tcx, 'tcx, miri::Evaluator<'tcx>>;
+type InterpCx<'tcx> = miri::InterpCx<'tcx, 'tcx, miri::Evaluator<'tcx>>;
 
 pub struct PrirodaContext<'a, 'tcx: 'a> {
-    ecx: InterpretCx<'a, 'tcx>,
+    ecx: InterpCx<'tcx>,
     step_count: &'a mut u128,
     traces: watch::Traces<'tcx>,
     config: &'a mut Config,
@@ -121,7 +121,7 @@ impl Default for Config {
 
 type RResult<T> = Result<T, Html<String>>;
 
-fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> InterpretCx<'a, 'tcx> {
+fn create_ecx<'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
     let (main_id, _) = tcx
         .entry_fn(LOCAL_CRATE)
         .expect("no main or start function found");
@@ -130,12 +130,17 @@ fn create_ecx<'a, 'tcx: 'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> InterpretCx<'a, 'tcx
         tcx,
         main_id,
         miri::MiriConfig {
-            validate: true,
             args: vec![],
+            communicate: true,
+            excluded_env_vars: vec![],
+            ignore_leaks: true,
             seed: None,
+            tracked_pointer_tag: None,
+            validate: true,
         },
     )
     .unwrap()
+    .0
 }
 
 pub struct PrirodaSender(
@@ -313,7 +318,7 @@ fn main() {
             let args = args.clone();
             // Ignore result to restart in case of a crash
             let _ = std::thread::spawn(move || {
-                let _ = rustc_driver::report_ices_to_stderr_if_any(move || {
+                let _ = rustc_driver::catch_fatal_errors(move || {
                     struct PrirodaCompilerCalls {
                         step_count: Arc<Mutex<u128>>,
                         config: Arc<Mutex<Config>>,
@@ -327,21 +332,10 @@ fn main() {
                     }
 
                     impl rustc_driver::Callbacks for PrirodaCompilerCalls {
-                        fn after_parsing(&mut self, compiler: &interface::Compiler) -> bool {
-                            let attr = (
-                                syntax::symbol::Symbol::intern("miri"),
-                                syntax::feature_gate::AttributeType::Whitelisted,
-                            );
-                            compiler.session().plugin_attributes.borrow_mut().push(attr);
-
-                            // Continue execution
-                            true
-                        }
-
-                        fn after_analysis(&mut self, compiler: &interface::Compiler) -> bool {
+                        fn after_analysis<'tcx>(&mut self, compiler: &interface::Compiler, queries: &'tcx rustc_interface::Queries<'tcx>) -> Compilation {
                             compiler.session().abort_if_errors();
 
-                            compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
+                            queries.global_ctxt().unwrap().peek_mut().enter(|tcx| {
                                 let mut step_count = self
                                     .step_count
                                     .lock()
@@ -379,8 +373,7 @@ fn main() {
 
                             compiler.session().abort_if_errors();
 
-                            // Don't continue execution
-                            false
+                            Compilation::Stop
                         }
                     }
 
