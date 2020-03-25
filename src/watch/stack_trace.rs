@@ -171,7 +171,7 @@ fn create_flame_graph<'a, 'tcx: 'a>(
 ) -> io::Result<()> {
     let mut flame_data = String::new();
     for (stack_trace, count) in traces {
-        let mut last_crate = rustc::hir::def_id::LOCAL_CRATE;
+        let mut last_crate = rustc_hir::def_id::LOCAL_CRATE;
         writeln!(
             flame_data,
             "{} {}",

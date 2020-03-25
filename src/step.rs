@@ -1,5 +1,5 @@
-use rustc::hir::def_id::{CrateNum, DefId, DefIndex};
 use rustc::mir;
+use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
 use rustc_index::vec::Idx;
 use std::collections::{HashMap, HashSet};
 use std::iter::Iterator;

@@ -9,13 +9,15 @@
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
 
-extern crate syntax;
 extern crate rustc;
+extern crate rustc_ast;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
+extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_interface;
 extern crate rustc_mir;
+extern crate rustc_span;
 
 extern crate lazy_static;
 extern crate regex;
@@ -49,10 +51,10 @@ use std::ops::FnOnce;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::mir;
 use rustc::ty::TyCtxt;
 use rustc_driver::Compilation;
+use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
 
 use promising_future::future_promise;
@@ -73,7 +75,7 @@ fn should_hide_stmt(stmt: &mir::Statement) -> bool {
     }
 }
 
-type InterpCx<'tcx> = miri::InterpCx<'tcx, 'tcx, miri::Evaluator<'tcx>>;
+type InterpCx<'tcx> = miri::InterpCx<'tcx, 'tcx, miri::Evaluator<'tcx, 'tcx>>;
 
 pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: InterpCx<'tcx>,
@@ -121,7 +123,7 @@ impl Default for Config {
 
 type RResult<T> = Result<T, Html<String>>;
 
-fn create_ecx<'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
+fn create_ecx<'mir, 'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
     let (main_id, _) = tcx
         .entry_fn(LOCAL_CRATE)
         .expect("no main or start function found");
@@ -136,7 +138,9 @@ fn create_ecx<'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
             ignore_leaks: true,
             seed: None,
             tracked_pointer_tag: None,
+            tracked_alloc_id: None,
             validate: true,
+            stacked_borrows: true,
         },
     )
     .unwrap()

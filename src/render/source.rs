@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::syntax::source_map::Span;
 use miri::{Frame, FrameData, Tag};
 use rustc::ty::TyCtxt;
+use rustc_span::Span;
 
 use horrorshow::prelude::*;
 use syntect::easy::HighlightLines;
@@ -86,7 +86,7 @@ pub fn render_source(
         .last()
         .unwrap()
         .macro_backtrace()
-        .get(0)
+        .next()
         .map(|b| b.call_site)
     {
         instr_spans.push(span);
