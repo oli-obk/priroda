@@ -4,6 +4,7 @@ use rustc_index::vec::Idx;
 use std::collections::{HashMap, HashSet};
 use std::iter::Iterator;
 
+use miri::{InterpResult, ThreadsEvalContextExt};
 use serde::de::{Deserialize, Deserializer, Error as SerdeError};
 
 use crate::{InterpCx, PrirodaContext};
@@ -96,45 +97,48 @@ where
     F: Fn(&InterpCx) -> ShouldContinue,
 {
     let mut message = None;
-    loop {
-        if pcx.ecx.stack().len() <= 1 && is_ret(&pcx.ecx) {
-            break;
-        }
-        match pcx.ecx.step() {
-            Ok(true) => {
-                *pcx.step_count += 1;
-                crate::watch::step_callback(pcx);
-
-                if let Some(frame) = pcx.ecx.stack().last() {
-                    if let Some(block) = frame.block {
-                        let blck = &frame.body.basic_blocks()[block];
-                        if frame.stmt != blck.statements.len()
-                            && crate::should_hide_stmt(&blck.statements[frame.stmt])
-                            && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx)
-                        {
-                            continue;
-                        }
-                    } else {
-                        // Unwinding, but no cleanup for this frame
-                        // FIXME make step behaviour configurable
-                    }
-                }
-                if let ShouldContinue::Stop = continue_while(&pcx.ecx) {
-                    break;
-                }
-                if pcx.config.bptree.is_at_breakpoint(&pcx.ecx) {
-                    break;
-                }
+    let ret: InterpResult<'_, _> = (|| {
+        loop {
+            if pcx.ecx.stack().len() <= 1 && is_ret(&pcx.ecx) {
+                break;
             }
-            Ok(false) => {
+            if !pcx.ecx.schedule()? {
                 message = Some("interpretation finished".to_string());
                 break;
             }
-            Err(e) => {
-                message = Some(format!("{:?}", e));
+            assert!(pcx.ecx.step()?);
+
+            *pcx.step_count += 1;
+            crate::watch::step_callback(pcx);
+
+            if let Some(frame) = pcx.ecx.stack().last() {
+                if let Some(block) = frame.block {
+                    let blck = &frame.body.basic_blocks()[block];
+                    if frame.stmt != blck.statements.len()
+                        && crate::should_hide_stmt(&blck.statements[frame.stmt])
+                        && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx)
+                    {
+                        continue;
+                    }
+                } else {
+                    // Unwinding, but no cleanup for this frame
+                    // FIXME make step behaviour configurable
+                }
+            }
+            if let ShouldContinue::Stop = continue_while(&pcx.ecx) {
+                break;
+            }
+            if pcx.config.bptree.is_at_breakpoint(&pcx.ecx) {
                 break;
             }
         }
+        Ok(())
+    })();
+    match ret {
+        Err(e) => {
+            message = Some(format!("{:?}", e));
+        }
+        Ok(_) => {}
     }
     message.unwrap_or_else(String::new)
 }
