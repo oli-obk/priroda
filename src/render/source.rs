@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use miri::{Frame, FrameData, Tag};
-use rustc::ty::TyCtxt;
+use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 
 use horrorshow::prelude::*;

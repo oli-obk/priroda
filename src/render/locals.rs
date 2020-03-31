@@ -1,5 +1,5 @@
-use rustc::mir::{self, interpret::{InterpError, UndefinedBehaviorInfo}};
-use rustc::ty::{
+use rustc_middle::mir::{self, interpret::{InterpError, UndefinedBehaviorInfo}};
+use rustc_middle::ty::{
     layout::{Abi, Size},
     subst::Subst,
     ParamEnv, TyKind, TyS, TypeAndMut,
@@ -210,7 +210,7 @@ fn pp_operand<'tcx>(
 
             for (i, adt_field) in adt_fields.iter().enumerate() {
                 let field_pretty: InterpResult<String> = try {
-                    let field_op_ty = ecx.operand_field(op_ty, i as u64)?;
+                    let field_op_ty = ecx.operand_field(op_ty, i as usize)?;
                     pp_operand(ecx, field_op_ty)?
                 };
 

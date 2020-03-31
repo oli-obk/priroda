@@ -2,8 +2,8 @@ mod graphviz;
 pub mod locals;
 mod source;
 
-use rustc::hir::map::definitions::DefPathData;
-use rustc::ty::layout::Size;
+use rustc_hir::definitions::DefPathData;
+use rustc_middle::ty::layout::Size;
 
 use horrorshow::{Raw, Template};
 use rocket::response::content::Html;

@@ -9,7 +9,7 @@
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
 
-extern crate rustc;
+extern crate rustc_middle;
 extern crate rustc_ast;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
@@ -51,8 +51,8 @@ use std::ops::FnOnce;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use rustc::mir;
-use rustc::ty::TyCtxt;
+use rustc_middle::mir;
+use rustc_middle::ty::TyCtxt;
 use rustc_driver::Compilation;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
@@ -68,7 +68,7 @@ use miri::AllocId;
 use crate::step::BreakpointTree;
 
 fn should_hide_stmt(stmt: &mir::Statement) -> bool {
-    use rustc::mir::StatementKind::*;
+    use rustc_middle::mir::StatementKind::*;
     match stmt.kind {
         StorageLive(_) | StorageDead(_) | Nop => true,
         _ => false,

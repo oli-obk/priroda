@@ -10,7 +10,7 @@
 
 use crate::step::LocalBreakpoints;
 use miri::{Frame, FrameData, Tag};
-use rustc::mir::*;
+use rustc_middle::mir::*;
 use std::fmt::{self, Debug, Write};
 
 pub fn render_html<'tcx>(frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakpoints) -> String {
@@ -44,7 +44,7 @@ pub fn render_html<'tcx>(frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakp
     let edge_colors = {
         let blck = &frame.body.basic_blocks()[block];
         let (targets, unwind) = if frame.stmt == blck.statements.len() {
-            use rustc::mir::TerminatorKind::*;
+            use rustc_middle::mir::TerminatorKind::*;
             match blck.terminator().kind {
                 Goto { target } => (vec![target], None),
                 SwitchInt { ref targets, .. } => (targets.to_vec(), None),

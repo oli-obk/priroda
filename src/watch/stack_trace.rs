@@ -2,7 +2,7 @@ use std::fmt::Write;
 use std::io::{self, Write as IoWrite};
 use std::process::{Command, Stdio};
 
-use rustc::ty::{self, Instance, InstanceDef, ParamEnv};
+use rustc_middle::ty::{self, Instance, InstanceDef, ParamEnv};
 
 use crate::*;
 
@@ -29,7 +29,7 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
         (frame.stmt, blck)
     };
     if stmt == blck.statements.len() {
-        use rustc::mir::TerminatorKind::*;
+        use rustc_middle::mir::TerminatorKind::*;
         match &blck.terminator().kind {
             Call { func, args, .. } => {
                 if let Some(instance) = instance_for_call_operand(ecx, &func) {
@@ -54,7 +54,7 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
 
 fn instance_for_call_operand<'a, 'tcx: 'a>(
     ecx: &InterpCx<'tcx>,
-    func: &'tcx rustc::mir::Operand,
+    func: &'tcx rustc_middle::mir::Operand,
 ) -> Option<Instance<'tcx>> {
     let res: ::miri::InterpResult<Instance> = try {
         let func = ecx.eval_operand(func, None)?;

@@ -1,4 +1,4 @@
-use rustc::mir;
+use rustc_middle::mir;
 use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
 use rustc_index::vec::Idx;
 use std::collections::{HashMap, HashSet};
@@ -149,7 +149,7 @@ pub fn is_ret(ecx: &InterpCx) -> bool {
             let basic_block = &frame.body.basic_blocks()[block];
 
             match basic_block.terminator().kind {
-                rustc::mir::TerminatorKind::Return | rustc::mir::TerminatorKind::Resume => {
+                rustc_middle::mir::TerminatorKind::Return | rustc_middle::mir::TerminatorKind::Resume => {
                     frame.stmt >= basic_block.statements.len()
                 }
                 _ => false,
