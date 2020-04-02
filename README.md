@@ -1,7 +1,6 @@
 # Priroda
 
-Remote sensing bugs from your comfy ~~zero~~ gravity hack center in ~~orbit~~
-the browser of your choice.
+Priroda is a graphical (UI in browser) debugger for Rust programs
 
 ## Setup
 
