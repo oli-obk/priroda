@@ -18,6 +18,7 @@ extern crate rustc_index;
 extern crate rustc_interface;
 extern crate rustc_mir;
 extern crate rustc_span;
+extern crate rustc_target;
 
 extern crate lazy_static;
 extern crate regex;
@@ -130,7 +131,7 @@ fn create_ecx<'mir, 'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
 
     miri::create_ecx(
         tcx,
-        main_id,
+        main_id.to_def_id(),
         miri::MiriConfig {
             args: vec![],
             communicate: true,
@@ -139,8 +140,10 @@ fn create_ecx<'mir, 'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
             seed: None,
             tracked_pointer_tag: None,
             tracked_alloc_id: None,
+            tracked_call_id: None,
             validate: true,
             stacked_borrows: true,
+            check_alignment: false,
         },
     )
     .unwrap()
@@ -423,7 +426,7 @@ fn init_logger() {
     builder.format(format).filter(None, log::LevelFilter::Info);
 
     if std::env::var("MIRI_LOG").is_ok() {
-        builder.parse(&std::env::var("MIRI_LOG").unwrap());
+        builder.parse_filters(&std::env::var("MIRI_LOG").unwrap());
     }
 
     builder.init();

@@ -18,8 +18,8 @@ pub fn render_html<'tcx>(frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakp
 
     render_mir_svg(&frame.body, breakpoints, &mut rendered, None).unwrap();
 
-    let block = if let Some(block) = frame.block {
-        block
+    let (block, statement_index) = if let Some(location) = frame.loc {
+        (location.block, location.statement_index)
     } else {
         rendered.push_str("<div style='color: red;'>Unwinding</div>");
         return rendered;
@@ -29,21 +29,21 @@ pub fn render_html<'tcx>(frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakp
         let blck = &frame.body.basic_blocks()[block];
         (
             block.index() + 1,
-            if frame.stmt == blck.statements.len() {
+            if statement_index == blck.statements.len() {
                 if blck.statements.is_empty() {
                     6
                 } else {
                     blck.statements.len() + 7
                 }
             } else {
-                assert!(frame.stmt < blck.statements.len());
-                frame.stmt + 6
+                assert!(statement_index < blck.statements.len());
+                statement_index + 6
             },
         )
     };
     let edge_colors = {
         let blck = &frame.body.basic_blocks()[block];
-        let (targets, unwind) = if frame.stmt == blck.statements.len() {
+        let (targets, unwind) = if statement_index == blck.statements.len() {
             use rustc_middle::mir::TerminatorKind::*;
             match blck.terminator().kind {
                 Goto { target } => (vec![target], None),
@@ -181,8 +181,8 @@ fn write_node_label<W: Write>(
     // List of statements in the middle.
     if !data.statements.is_empty() {
         write!(w, r#"<tr><td align="left" balign="left">"#)?;
-        for (stmt_index, statement) in data.statements.iter().enumerate() {
-            if breakpoints.breakpoint_exists(Some(block), stmt_index) {
+        for (statement_index, statement) in data.statements.iter().enumerate() {
+            if breakpoints.breakpoint_exists(Some(Location { block, statement_index})) {
                 write!(w, "+ ")?;
             } else {
                 write!(w, "&nbsp; ")?;

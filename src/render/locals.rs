@@ -1,14 +1,14 @@
 use rustc_middle::mir::{self, interpret::{InterpError, UndefinedBehaviorInfo}};
 use rustc_middle::ty::{
-    layout::{Abi, Size},
     subst::Subst,
     ParamEnv, TyKind, TyS, TypeAndMut,
 };
+use rustc_target::abi::{Abi, Size};
 use rustc_mir::interpret::MemPlaceMeta;
 
 use miri::{
     Allocation, AllocExtra, Frame, Immediate, InterpResult, OpTy, Operand, Pointer, Scalar,
-    ScalarMaybeUndef, Tag,
+    ScalarMaybeUninit, Tag,
 };
 
 use horrorshow::prelude::*;
@@ -118,10 +118,10 @@ pub fn render_locals<'tcx>(
         .unwrap()
 }
 
-fn print_scalar_maybe_undef(val: ScalarMaybeUndef<miri::Tag>) -> String {
+fn print_scalar_maybe_undef(val: ScalarMaybeUninit<miri::Tag>) -> String {
     match val {
-        ScalarMaybeUndef::Undef => "&lt;undef &gt;".to_string(),
-        ScalarMaybeUndef::Scalar(val) => print_scalar(val),
+        ScalarMaybeUninit::Uninit => "&lt;undef &gt;".to_string(),
+        ScalarMaybeUninit::Scalar(val) => print_scalar(val),
     }
 }
 
@@ -163,8 +163,8 @@ fn pp_operand<'tcx>(
         ) => {
             if let Operand::Immediate(val) = *op_ty {
                 if let Immediate::ScalarPair(
-                    ScalarMaybeUndef::Scalar(Scalar::Ptr(ptr)),
-                    ScalarMaybeUndef::Scalar(Scalar::Raw { data: len, .. }),
+                    ScalarMaybeUninit::Scalar(Scalar::Ptr(ptr)),
+                    ScalarMaybeUninit::Scalar(Scalar::Raw { data: len, .. }),
                 ) = val
                 {
                     if let Ok(allocation) = ecx.memory.get_raw(ptr.alloc_id) {
@@ -181,7 +181,7 @@ fn pp_operand<'tcx>(
             }
         }
         TyKind::Adt(adt_def, _substs) => {
-            if let Operand::Immediate(Immediate::Scalar(ScalarMaybeUndef::Undef)) = *op_ty {
+            if let Operand::Immediate(Immediate::Scalar(ScalarMaybeUninit::Uninit)) = *op_ty {
                 Err(err())?;
             }
 
@@ -246,7 +246,7 @@ fn pp_operand<'tcx>(
         Err(err())?;
     }
     let scalar = ecx.read_scalar(op_ty)?;
-    if let ScalarMaybeUndef::Scalar(Scalar::Ptr(_)) = &scalar {
+    if let ScalarMaybeUninit::Scalar(Scalar::Ptr(_)) = &scalar {
         return Ok(print_scalar_maybe_undef(scalar)); // If the value is a ptr, print it
     }
     match op_ty.layout.ty.kind {
@@ -360,8 +360,8 @@ pub fn print_alloc(
             ).unwrap();
         } else {
             if alloc
-                .undef_mask()
-                .is_range_defined(Size::from_bytes(i), Size::from_bytes(i + 1))
+                .init_mask()
+                .is_range_initialized(Size::from_bytes(i), Size::from_bytes(i + 1))
                 .is_ok()
             {
                 write!(&mut s, "{:02x}", alloc.inspect_with_undef_and_ptr_outside_interpreter(i as usize .. i as usize + 1)[0]).unwrap();

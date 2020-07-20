@@ -70,11 +70,13 @@ pub fn render_source(
         return Box::new(FnRenderer::new(|_| {}));
     }
     let frame = frame.unwrap();
-    let mut instr_spans = if let Some(block) = frame.block {
-        if frame.stmt == frame.body[block].statements.len() {
+    let mut instr_spans = if let Some(location) = frame.loc {
+        let stmt = location.statement_index;
+        let block = location.block;
+        if stmt == frame.body[block].statements.len() {
             vec![frame.body[block].terminator().source_info.span]
         } else {
-            vec![frame.body[block].statements[frame.stmt]
+            vec![frame.body[block].statements[stmt]
                 .source_info
                 .span]
         }

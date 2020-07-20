@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use rustc_middle::mir::interpret::{Allocation, Pointer, PointerArithmetic};
-use rustc_middle::ty::layout::Size;
+use rustc_target::abi::Size;
 use rustc_middle::ty::Instance;
 
 use crate::*;
@@ -83,7 +83,7 @@ fn eq_alloc(
         && a_size == b_size
         && a.inspect_with_undef_and_ptr_outside_interpreter(0 .. a.len()) == b.inspect_with_undef_and_ptr_outside_interpreter(0 .. b.len())
         && a.relocations() == b.relocations()
-        && a.undef_mask() == b.undef_mask()
+        && a.init_mask() == b.init_mask()
 }
 
 pub fn step_callback(pcx: &mut PrirodaContext) {

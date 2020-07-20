@@ -3,12 +3,13 @@ pub mod locals;
 mod source;
 
 use rustc_hir::definitions::DefPathData;
-use rustc_middle::ty::layout::Size;
+use rustc_target::abi::Size;
+use rustc_mir::interpret::Machine;
 
 use horrorshow::{Raw, Template};
 use rocket::response::content::Html;
 
-use miri::{AllocId, Frame, Pointer};
+use miri::{AllocId, Pointer};
 
 use crate::step::Breakpoint;
 use crate::PrirodaContext;
@@ -65,17 +66,17 @@ pub fn render_main_window(
     message: String,
 ) -> Html<String> {
     let is_active_stack_frame = match display_frame {
-        Some(n) => n == pcx.ecx.stack().len() - 1,
+        Some(n) => n == Machine::stack(&pcx.ecx).len() - 1,
         None => true,
     };
     let frame = display_frame
-        .and_then(|frame| pcx.ecx.stack().get(frame))
-        .or_else(|| pcx.ecx.stack().last());
-    let stack: Vec<(String, String, String)> = pcx
-        .ecx
-        .stack()
+        .and_then(|frame| Machine::stack(&pcx.ecx).get(frame))
+        .or_else(|| Machine::stack(&pcx.ecx).last());
+    let stack: Vec<(String, String, String)> = Machine::stack(&pcx.ecx)
         .iter()
-        .map(|&Frame { instance, span, .. }| {
+        .map(|frame| {
+            let instance = &frame.instance;
+            let span = frame.current_source_info().unwrap().span;
             let name = if pcx
                 .ecx
                 .tcx

@@ -3,6 +3,7 @@ use std::io::{self, Write as IoWrite};
 use std::process::{Command, Stdio};
 
 use rustc_middle::ty::{self, Instance, InstanceDef, ParamEnv};
+use rustc_mir::interpret::Machine;
 
 use crate::*;
 
@@ -10,24 +11,20 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
     let ecx = &pcx.ecx;
     let traces = &mut pcx.traces;
 
-    let stack_trace = ecx
-        .stack()
+    let stack_trace = Machine::stack(ecx)
         .iter()
         .map(|frame| (frame.instance,))
         .collect::<Vec<_>>();
     insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);
 
-    let block = if let Some(block) = ecx.frame().block {
-        block
+    let location = if let Some(location) = ecx.frame().loc {
+        location
     } else {
         return; // Unwinding, but no cleanup for current frame needed
     };
+    let mir::Location { block, statement_index: stmt } = location;
+    let blck = &ecx.frame().body.basic_blocks()[block];
 
-    let (stmt, blck) = {
-        let frame = ecx.frame();
-        let blck = &frame.body.basic_blocks()[block];
-        (frame.stmt, blck)
-    };
     if stmt == blck.statements.len() {
         use rustc_middle::mir::TerminatorKind::*;
         match &blck.terminator().kind {
@@ -36,8 +33,8 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
                     insert_stack_traces_for_instance(pcx, stack_trace, instance, Some(&args));
                 }
             }
-            Drop { location, .. } => {
-                let location_ty = location.ty(ecx.frame().body, ecx.tcx.tcx).ty;
+            Drop { place, .. } => {
+                let location_ty = place.ty(ecx.frame().body, ecx.tcx.tcx).ty;
                 let location_ty = ecx.tcx.subst_and_normalize_erasing_regions(
                     ecx.frame().instance.substs,
                     ParamEnv::reveal_all(),
@@ -74,7 +71,7 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
                     ParamEnv::reveal_all(),
                     &substs,
                 );
-                ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), def_id, substs).unwrap()
+                ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), def_id, substs).unwrap().unwrap()
             }
             _ => {
                 panic!("can't handle callee of type {:?}", func.layout.ty);
