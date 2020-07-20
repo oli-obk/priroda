@@ -3,4 +3,4 @@ rust:
 - nightly
 
 install:
-- rustup component add rustc-dev
+- rustup component add rustc-dev llvm-tools-preview
