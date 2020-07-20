@@ -102,9 +102,6 @@ where
     let mut message = None;
     let ret: InterpResult<'_, _> = (|| {
         loop {
-            if Machine::stack(&pcx.ecx).len() <= 1 && is_ret(&pcx.ecx) {
-                break;
-            }
             match pcx.ecx.schedule()? {
                 SchedulingAction::ExecuteStep => {}
                 SchedulingAction::ExecuteTimeoutCallback => {

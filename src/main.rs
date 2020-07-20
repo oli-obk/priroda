@@ -142,7 +142,7 @@ fn create_ecx<'mir, 'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
             tracked_alloc_id: None,
             tracked_call_id: None,
             validate: true,
-            stacked_borrows: true,
+            stacked_borrows: false,
             check_alignment: false,
         },
     )
