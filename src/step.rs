@@ -102,6 +102,12 @@ where
     let mut message = None;
     let ret: InterpResult<'_, _> = (|| {
         loop {
+            let is_main_thread_active = pcx.ecx.get_active_thread() == 0.into();
+            if is_main_thread_active && Machine::stack(&pcx.ecx).len() <= 1 && is_ret(&pcx.ecx) {
+                // When the main thread exists, the program terminates. However,
+                // we want to prevent stepping out of the program.
+                break;
+            }
             match pcx.ecx.schedule()? {
                 SchedulingAction::ExecuteStep => {}
                 SchedulingAction::ExecuteTimeoutCallback => {
@@ -121,7 +127,10 @@ where
                 }
             }
             let info = pcx.ecx.preprocess_diagnostics();
-            assert!(pcx.ecx.step()?, "a terminated thread was scheduled for execution");
+            if !pcx.ecx.step()? {
+                message = Some("a terminated thread was scheduled for execution".to_string());
+                break;
+            }
             pcx.ecx.process_diagnostics(info);
 
             *pcx.step_count += 1;
