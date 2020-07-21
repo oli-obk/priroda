@@ -100,7 +100,7 @@ where
     F: Fn(&InterpCx) -> ShouldContinue,
 {
     let mut message = None;
-    let ret: InterpResult<'_, _> = (|| {
+    let ret: InterpResult<_> = try {
         loop {
             let is_main_thread_active = pcx.ecx.get_active_thread() == 0.into();
             if is_main_thread_active && Machine::stack(&pcx.ecx).len() <= 1 && is_ret(&pcx.ecx) {
@@ -157,8 +157,8 @@ where
                 break;
             }
         }
-        Ok(())
-    })();
+        ()
+    };
     match ret {
         Err(e) => {
             message = Some(format!("{:?}", e));
