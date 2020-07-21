@@ -10,7 +10,16 @@ the graphviz libraries present.
 * debian/ubuntu: `apt install libgraphviz-dev`
 
 Next, you're going to want a libstd with full MIR. The easiest way to obtain this is via
-`cargo miri` (install with `cargo +nightly install --force --git https://github.com/rust-lang/miri miri`).
+`cargo miri`:
+
+```bash
+# Install cargo miri:
+rustup component add miri
+# Compile libstd:
+cargo miri setup
+# Set the MIRI_SYSROOT environment variable to the path printed by the setup command:
+export MIRI_SYSROOT=...
+```
 
 And finally you need to install the `rustc-dev` component with `rustup component add rustc-dev`.
 
