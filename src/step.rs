@@ -1,9 +1,11 @@
-use rustc::hir::def_id::{CrateNum, DefId, DefIndex};
-use rustc::mir;
+use rustc_middle::mir;
+use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
 use rustc_index::vec::Idx;
+use rustc_mir::interpret::Machine;
 use std::collections::{HashMap, HashSet};
 use std::iter::Iterator;
 
+use miri::*;
 use serde::de::{Deserialize, Deserializer, Error as SerdeError};
 
 use crate::{InterpCx, PrirodaContext};
@@ -62,7 +64,7 @@ impl BreakpointTree {
     pub fn is_at_breakpoint(&self, ecx: &InterpCx) -> bool {
         let frame = ecx.frame();
         self.for_def_id(frame.instance.def_id())
-            .breakpoint_exists(frame.block, frame.stmt)
+            .breakpoint_exists(frame.loc)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Breakpoint> {
@@ -77,11 +79,13 @@ pub enum LocalBreakpoints<'a> {
 }
 
 impl<'a> LocalBreakpoints<'a> {
-    pub fn breakpoint_exists(self, bb: Option<mir::BasicBlock>, stmt: usize) -> bool {
-        if let Some(bb) = bb {
+    pub fn breakpoint_exists(self, location: Option<mir::Location>) -> bool {
+        if let Some(location) = location {
             match self {
                 LocalBreakpoints::NoBp => false,
-                LocalBreakpoints::SomeBps(bps) => bps.iter().any(|bp| bp.1 == bb && bp.2 == stmt),
+                LocalBreakpoints::SomeBps(bps) => {
+                    bps.iter().any(|bp| bp.1 == location.block && bp.2 == location.statement_index)
+                },
             }
         } else {
             // Unwinding, but no cleanup for this frame
@@ -96,57 +100,81 @@ where
     F: Fn(&InterpCx) -> ShouldContinue,
 {
     let mut message = None;
-    loop {
-        if pcx.ecx.stack().len() <= 1 && is_ret(&pcx.ecx) {
-            break;
-        }
-        match pcx.ecx.step() {
-            Ok(true) => {
-                *pcx.step_count += 1;
-                crate::watch::step_callback(pcx);
+    let ret: InterpResult<_> = try {
+        loop {
+            let is_main_thread_active = pcx.ecx.get_active_thread() == 0.into();
+            if is_main_thread_active && Machine::stack(&pcx.ecx).len() <= 1 && is_ret(&pcx.ecx) {
+                // When the main thread exists, the program terminates. However,
+                // we want to prevent stepping out of the program.
+                break;
+            }
+            match pcx.ecx.schedule()? {
+                SchedulingAction::ExecuteStep => {}
+                SchedulingAction::ExecuteTimeoutCallback => {
+                    pcx.ecx.run_timeout_callback()?;
+                    continue;
+                }
+                SchedulingAction::ExecuteDtors => {
+                    // This will either enable the thread again (so we go back
+                    // to `ExecuteStep`), or determine that this thread is done
+                    // for good.
+                    pcx.ecx.schedule_next_tls_dtor_for_active_thread()?;
+                    continue;
+                }
+                SchedulingAction::Stop => {
+                    message = Some("interpretation finished".to_string());
+                    break;
+                }
+            }
+            let info = pcx.ecx.preprocess_diagnostics();
+            if !pcx.ecx.step()? {
+                message = Some("a terminated thread was scheduled for execution".to_string());
+                break;
+            }
+            pcx.ecx.process_diagnostics(info);
 
-                if let Some(frame) = pcx.ecx.stack().last() {
-                    if let Some(block) = frame.block {
-                        let blck = &frame.body.basic_blocks()[block];
-                        if frame.stmt != blck.statements.len()
-                            && crate::should_hide_stmt(&blck.statements[frame.stmt])
-                            && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx)
-                        {
-                            continue;
-                        }
-                    } else {
-                        // Unwinding, but no cleanup for this frame
-                        // FIXME make step behaviour configurable
+            *pcx.step_count += 1;
+            crate::watch::step_callback(pcx);
+
+            if let Some(frame) = Machine::stack(&pcx.ecx).last() {
+                if let Some(location) = frame.loc {
+                    let blck = &frame.body.basic_blocks()[location.block];
+                    if location.statement_index != blck.statements.len()
+                        && crate::should_hide_stmt(&blck.statements[location.statement_index])
+                        && !pcx.config.bptree.is_at_breakpoint(&pcx.ecx)
+                    {
+                        continue;
                     }
-                }
-                if let ShouldContinue::Stop = continue_while(&pcx.ecx) {
-                    break;
-                }
-                if pcx.config.bptree.is_at_breakpoint(&pcx.ecx) {
-                    break;
+                } else {
+                    // Unwinding, but no cleanup for this frame
+                    // FIXME make step behaviour configurable
                 }
             }
-            Ok(false) => {
-                message = Some("interpretation finished".to_string());
+            if let ShouldContinue::Stop = continue_while(&pcx.ecx) {
                 break;
             }
-            Err(e) => {
-                message = Some(format!("{:?}", e));
+            if pcx.config.bptree.is_at_breakpoint(&pcx.ecx) {
                 break;
             }
         }
+    };
+    match ret {
+        Err(e) => {
+            message = Some(format!("{:?}", e));
+        }
+        Ok(_) => {}
     }
     message.unwrap_or_else(String::new)
 }
 
 pub fn is_ret(ecx: &InterpCx) -> bool {
-    if let Some(frame) = ecx.stack().last() {
-        if let Some(block) = frame.block {
-            let basic_block = &frame.body.basic_blocks()[block];
+    if let Some(frame) = Machine::stack(&ecx).last() {
+        if let Some(location) = frame.loc {
+            let basic_block = &frame.body.basic_blocks()[location.block];
 
             match basic_block.terminator().kind {
-                rustc::mir::TerminatorKind::Return | rustc::mir::TerminatorKind::Resume => {
-                    frame.stmt >= basic_block.statements.len()
+                rustc_middle::mir::TerminatorKind::Return | rustc_middle::mir::TerminatorKind::Resume => {
+                    location.statement_index >= basic_block.statements.len()
                 }
                 _ => false,
             }
@@ -249,11 +277,19 @@ pub mod step_routes {
     });
 
     action_route!(next: "/next", |pcx| {
-        let frame = pcx.ecx.stack().len();
-        let stmt = pcx.ecx.frame().stmt;
-        let block = pcx.ecx.frame().block;
-        step(pcx, |ecx| {
-            if ecx.stack().len() <= frame && (block < ecx.frame().block || stmt < ecx.frame().stmt) {
+        let frame = Machine::stack(&pcx.ecx).len();
+        let (block, stmt): (Option<mir::BasicBlock>, _) = if let Some(location) = pcx.ecx.frame().loc {
+            (Some(location.block), Some(location.statement_index))
+        } else {
+            (None, None)
+        };
+        step(pcx, move |ecx| {
+            let (curr_block, curr_stmt) = if let Some(location) = ecx.frame().loc {
+                (Some(location.block), Some(location.statement_index))
+            } else {
+                (None, None)
+            };
+            if Machine::stack(&ecx).len() <= frame && (block < curr_block || stmt < curr_stmt) {
                 ShouldContinue::Stop
             } else {
                 ShouldContinue::Continue
@@ -262,9 +298,9 @@ pub mod step_routes {
     });
 
     action_route!(return_: "/return", |pcx| {
-        let frame = pcx.ecx.stack().len();
+        let frame = Machine::stack(&pcx.ecx).len();
         step(pcx, |ecx| {
-            if ecx.stack().len() <= frame && is_ret(&ecx) {
+            if Machine::stack(&ecx).len() <= frame && is_ret(&ecx) {
                 ShouldContinue::Stop
             } else {
                 ShouldContinue::Continue
@@ -288,9 +324,9 @@ pub mod bp_routes {
 
     action_route!(add_here: "/add_here", |pcx| {
         let frame = pcx.ecx.frame();
-        if let Some(block) = frame.block {
-            pcx.config.bptree.add_breakpoint(Breakpoint(frame.instance.def_id(), block, frame.stmt));
-            format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), block.index(), frame.stmt)
+        if let Some(location) = frame.loc {
+            pcx.config.bptree.add_breakpoint(Breakpoint(frame.instance.def_id(), location.block, location.statement_index));
+            format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), location.block.index(), location.statement_index)
         } else {
             format!("Can't set breakpoint for unwinding without cleanup yet")
         }

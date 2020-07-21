@@ -1,13 +1,14 @@
-use rustc::mir::{self, interpret::{InterpError, UndefinedBehaviorInfo}};
-use rustc::ty::{
-    layout::{Abi, Size},
+use rustc_middle::mir::{self, interpret::{InterpError, UndefinedBehaviorInfo}};
+use rustc_middle::ty::{
     subst::Subst,
     ParamEnv, TyKind, TyS, TypeAndMut,
 };
+use rustc_target::abi::{Abi, Size};
+use rustc_mir::interpret::MemPlaceMeta;
 
 use miri::{
     Allocation, AllocExtra, Frame, Immediate, InterpResult, OpTy, Operand, Pointer, Scalar,
-    ScalarMaybeUndef, Tag,
+    ScalarMaybeUninit, Tag,
 };
 
 use horrorshow::prelude::*;
@@ -33,7 +34,7 @@ pub fn render_locals<'tcx>(
         .map(|(id, local_decl)| {
             let name = body.var_debug_info.iter().find(|var_debug_info| {
                 if var_debug_info.place.projection.is_empty() {
-                    var_debug_info.place.base == mir::PlaceBase::Local(id)
+                    var_debug_info.place.local == id
                 } else {
                     false
                 }
@@ -117,10 +118,10 @@ pub fn render_locals<'tcx>(
         .unwrap()
 }
 
-fn print_scalar_maybe_undef(val: ScalarMaybeUndef<miri::Tag>) -> String {
+fn print_scalar_maybe_undef(val: ScalarMaybeUninit<miri::Tag>) -> String {
     match val {
-        ScalarMaybeUndef::Undef => "&lt;undef &gt;".to_string(),
-        ScalarMaybeUndef::Scalar(val) => print_scalar(val),
+        ScalarMaybeUninit::Uninit => "&lt;undef &gt;".to_string(),
+        ScalarMaybeUninit::Scalar(val) => print_scalar(val),
     }
 }
 
@@ -162,8 +163,8 @@ fn pp_operand<'tcx>(
         ) => {
             if let Operand::Immediate(val) = *op_ty {
                 if let Immediate::ScalarPair(
-                    ScalarMaybeUndef::Scalar(Scalar::Ptr(ptr)),
-                    ScalarMaybeUndef::Scalar(Scalar::Raw { data: len, .. }),
+                    ScalarMaybeUninit::Scalar(Scalar::Ptr(ptr)),
+                    ScalarMaybeUninit::Scalar(Scalar::Raw { data: len, .. }),
                 ) = val
                 {
                     if let Ok(allocation) = ecx.memory.get_raw(ptr.alloc_id) {
@@ -180,7 +181,7 @@ fn pp_operand<'tcx>(
             }
         }
         TyKind::Adt(adt_def, _substs) => {
-            if let Operand::Immediate(Immediate::Scalar(ScalarMaybeUndef::Undef)) = *op_ty {
+            if let Operand::Immediate(Immediate::Scalar(ScalarMaybeUninit::Uninit)) = *op_ty {
                 Err(err())?;
             }
 
@@ -209,7 +210,7 @@ fn pp_operand<'tcx>(
 
             for (i, adt_field) in adt_fields.iter().enumerate() {
                 let field_pretty: InterpResult<String> = try {
-                    let field_op_ty = ecx.operand_field(op_ty, i as u64)?;
+                    let field_op_ty = ecx.operand_field(op_ty, i as usize)?;
                     pp_operand(ecx, field_op_ty)?
                 };
 
@@ -245,43 +246,32 @@ fn pp_operand<'tcx>(
         Err(err())?;
     }
     let scalar = ecx.read_scalar(op_ty)?;
-    if let ScalarMaybeUndef::Scalar(Scalar::Ptr(_)) = &scalar {
+    if let ScalarMaybeUninit::Scalar(Scalar::Ptr(_)) = &scalar {
         return Ok(print_scalar_maybe_undef(scalar)); // If the value is a ptr, print it
     }
-    let bits = scalar.to_bits(op_ty.layout.size)?;
     match op_ty.layout.ty.kind {
         TyKind::Bool => {
-            if bits == 0 {
-                Ok("false".to_string())
-            } else if bits == 1 {
+            if scalar.to_bool()? {
                 Ok("true".to_string())
             } else {
-                Err(err().into())
+                Ok("false".to_string())
             }
         }
-        TyKind::Char if bits < ::std::char::MAX as u128 => {
-            let chr = ::std::char::from_u32(bits as u32).unwrap();
+        TyKind::Char => {
+            let chr = scalar.to_char()?;
             if chr.is_ascii() {
                 Ok(format!("'{}'", chr))
             } else {
                 Err(err().into())
             }
         }
-        TyKind::Uint(_) => Ok(format!("{0}", bits)),
-        TyKind::Int(_) => Ok(format!(
-            "{0}",
-            ::miri::sign_extend(bits, op_ty.layout.size) as i128
-        )),
+        TyKind::Uint(_) => Ok(format!("{0}", scalar.to_u64()?)),
+        TyKind::Int(_) => Ok(format!("{0}", scalar.to_i64()?)),
         TyKind::Float(float_ty) => {
-            use crate::syntax::ast::FloatTy::*;
+            use rustc_ast::ast::FloatTy::*;
             match float_ty {
-                F32 if bits < ::std::u32::MAX as u128 => {
-                    Ok(format!("{}", <f32>::from_bits(bits as u32)))
-                }
-                F64 if bits < ::std::u64::MAX as u128 => {
-                    Ok(format!("{}", <f64>::from_bits(bits as u64)))
-                }
-                _ => Err(err().into()),
+                F32 => Ok(format!("{}", scalar.to_f32()?)),
+                F64 => Ok(format!("{}", scalar.to_f64()?)),
             }
         }
         _ => Err(err().into()),
@@ -297,7 +287,7 @@ pub fn print_operand<'a, 'tcx: 'a>(
     let (alloc, txt) = match *op_ty {
         Operand::Indirect(place) => {
             let size: u64 = op_ty.layout.size.bytes();
-            if place.meta.is_none() {
+            if place.meta == MemPlaceMeta::None {
                 let ptr = place.to_ref().to_scalar().unwrap();
                 if ptr.is_ptr() {
                     let (alloc, txt, _len) = print_ptr(ecx, ptr.assert_ptr(), Some(size))?;
@@ -370,8 +360,8 @@ pub fn print_alloc(
             ).unwrap();
         } else {
             if alloc
-                .undef_mask()
-                .is_range_defined(Size::from_bytes(i), Size::from_bytes(i + 1))
+                .init_mask()
+                .is_range_initialized(Size::from_bytes(i), Size::from_bytes(i + 1))
                 .is_ok()
             {
                 write!(&mut s, "{:02x}", alloc.inspect_with_undef_and_ptr_outside_interpreter(i as usize .. i as usize + 1)[0]).unwrap();

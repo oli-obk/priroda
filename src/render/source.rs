@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::syntax::source_map::Span;
 use miri::{Frame, FrameData, Tag};
-use rustc::ty::TyCtxt;
+use rustc_middle::ty::TyCtxt;
+use rustc_span::Span;
 
 use horrorshow::prelude::*;
 use syntect::easy::HighlightLines;
@@ -70,11 +70,13 @@ pub fn render_source(
         return Box::new(FnRenderer::new(|_| {}));
     }
     let frame = frame.unwrap();
-    let mut instr_spans = if let Some(block) = frame.block {
-        if frame.stmt == frame.body[block].statements.len() {
+    let mut instr_spans = if let Some(location) = frame.loc {
+        let stmt = location.statement_index;
+        let block = location.block;
+        if stmt == frame.body[block].statements.len() {
             vec![frame.body[block].terminator().source_info.span]
         } else {
-            vec![frame.body[block].statements[frame.stmt]
+            vec![frame.body[block].statements[stmt]
                 .source_info
                 .span]
         }
@@ -86,7 +88,7 @@ pub fn render_source(
         .last()
         .unwrap()
         .macro_backtrace()
-        .get(0)
+        .next()
         .map(|b| b.call_site)
     {
         instr_spans.push(span);

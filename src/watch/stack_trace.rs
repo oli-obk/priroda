@@ -2,7 +2,8 @@ use std::fmt::Write;
 use std::io::{self, Write as IoWrite};
 use std::process::{Command, Stdio};
 
-use rustc::ty::{self, Instance, InstanceDef, ParamEnv};
+use rustc_middle::ty::{self, Instance, InstanceDef, ParamEnv};
+use rustc_mir::interpret::Machine;
 
 use crate::*;
 
@@ -10,34 +11,30 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
     let ecx = &pcx.ecx;
     let traces = &mut pcx.traces;
 
-    let stack_trace = ecx
-        .stack()
+    let stack_trace = Machine::stack(ecx)
         .iter()
         .map(|frame| (frame.instance,))
         .collect::<Vec<_>>();
     insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);
 
-    let block = if let Some(block) = ecx.frame().block {
-        block
+    let location = if let Some(location) = ecx.frame().loc {
+        location
     } else {
         return; // Unwinding, but no cleanup for current frame needed
     };
+    let mir::Location { block, statement_index: stmt } = location;
+    let blck = &ecx.frame().body.basic_blocks()[block];
 
-    let (stmt, blck) = {
-        let frame = ecx.frame();
-        let blck = &frame.body.basic_blocks()[block];
-        (frame.stmt, blck)
-    };
     if stmt == blck.statements.len() {
-        use rustc::mir::TerminatorKind::*;
+        use rustc_middle::mir::TerminatorKind::*;
         match &blck.terminator().kind {
             Call { func, args, .. } => {
                 if let Some(instance) = instance_for_call_operand(ecx, &func) {
                     insert_stack_traces_for_instance(pcx, stack_trace, instance, Some(&args));
                 }
             }
-            Drop { location, .. } => {
-                let location_ty = location.ty(ecx.frame().body, ecx.tcx.tcx).ty;
+            Drop { place, .. } => {
+                let location_ty = place.ty(ecx.frame().body, ecx.tcx.tcx).ty;
                 let location_ty = ecx.tcx.subst_and_normalize_erasing_regions(
                     ecx.frame().instance.substs,
                     ParamEnv::reveal_all(),
@@ -54,7 +51,7 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
 
 fn instance_for_call_operand<'a, 'tcx: 'a>(
     ecx: &InterpCx<'tcx>,
-    func: &'tcx rustc::mir::Operand,
+    func: &'tcx rustc_middle::mir::Operand,
 ) -> Option<Instance<'tcx>> {
     let res: ::miri::InterpResult<Instance> = try {
         let func = ecx.eval_operand(func, None)?;
@@ -74,7 +71,7 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
                     ParamEnv::reveal_all(),
                     &substs,
                 );
-                ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), def_id, substs).unwrap()
+                ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), def_id, substs).unwrap().unwrap()
             }
             _ => {
                 panic!("can't handle callee of type {:?}", func.layout.ty);
@@ -171,7 +168,7 @@ fn create_flame_graph<'a, 'tcx: 'a>(
 ) -> io::Result<()> {
     let mut flame_data = String::new();
     for (stack_trace, count) in traces {
-        let mut last_crate = rustc::hir::def_id::LOCAL_CRATE;
+        let mut last_crate = rustc_hir::def_id::LOCAL_CRATE;
         writeln!(
             flame_data,
             "{} {}",
