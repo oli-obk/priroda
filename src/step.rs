@@ -157,7 +157,6 @@ where
                 break;
             }
         }
-        ()
     };
     match ret {
         Err(e) => {
