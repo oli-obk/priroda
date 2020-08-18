@@ -21,7 +21,8 @@ cargo miri setup
 export MIRI_SYSROOT=...
 ```
 
-And finally you need to install the `rustc-dev` component with `rustup component add rustc-dev`.
+And finally you need to install the `rustc-dev` and `llvm-tools-preview` components with
+`rustup component add rustc-dev llvm-tools-preview`.
 
 ## Features
 
