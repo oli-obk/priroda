@@ -173,13 +173,10 @@ fn pp_operand<'tcx>(
                     if let Ok(allocation) = ecx.memory.get_raw(ptr.alloc_id) {
                         let offset = ptr.offset.bytes();
                         if (offset as u128) < allocation.len() as u128 {
+                            let start = offset as usize;
+                            let end = start.checked_add(len as usize).ok_or(err())?;
                             let alloc_bytes = &allocation
-                                .inspect_with_undef_and_ptr_outside_interpreter(
-                                    offset as usize
-                                        ..(offset as usize)
-                                            .checked_add(len as usize)
-                                            .ok_or(err())?,
-                                );
+                                .inspect_with_undef_and_ptr_outside_interpreter(start..end);
                             let s = String::from_utf8_lossy(alloc_bytes);
                             return Ok(format!("\"{}\"", s));
                         }
@@ -374,14 +371,9 @@ pub fn print_alloc(
                 .is_range_initialized(Size::from_bytes(i), Size::from_bytes(i + 1))
                 .is_ok()
             {
-                write!(
-                    &mut s,
-                    "{:02x}",
-                    alloc
-                        .inspect_with_undef_and_ptr_outside_interpreter(i as usize..i as usize + 1)
-                        [0]
-                )
-                .unwrap();
+                let byte = alloc
+                    .inspect_with_undef_and_ptr_outside_interpreter(i as usize..i as usize + 1)[0];
+                write!(&mut s, "{:02x}", byte).unwrap();
             } else {
                 let ub_chars = [
                     '∅', '∆', '∇', '∓', '∞', '⊙', '⊠', '⊘', '⊗', '⊛', '⊝', '⊡', '⊠',

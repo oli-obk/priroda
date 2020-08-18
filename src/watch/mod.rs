@@ -106,10 +106,11 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
                 alloc_trace
                     .trace_points
                     .push((*pcx.step_count, AllocTracePoint::Changed(alloc.clone())));
-            } else if let Some(&(_, AllocTracePoint::Deallocated)) = alloc_trace.trace_points.last()
+            } else if !matches!(
+                alloc_trace.trace_points.last(),
+                Some(&(_, AllocTracePoint::Deallocated))
+            ) && !alloc_trace.trace_points.is_empty()
             {
-            } else if alloc_trace.trace_points.is_empty() {
-            } else {
                 alloc_trace
                     .trace_points
                     .push((*pcx.step_count, AllocTracePoint::Deallocated));
