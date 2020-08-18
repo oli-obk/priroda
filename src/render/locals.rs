@@ -326,20 +326,15 @@ pub fn print_ptr(
     ptr: Pointer<Tag>,
     size: Option<u64>,
 ) -> Result<(Option<u64>, String, u64), ()> {
-    match (
-        ecx.memory.get_raw(ptr.alloc_id),
-        ecx.memory.get_fn(ptr.into()),
-    ) {
-        (Ok(alloc), Err(_)) => {
-            let s = print_alloc(ecx.tcx.data_layout.pointer_size.bytes(), ptr, alloc, size);
-            Ok((Some(ptr.alloc_id.0), s, alloc.len() as u64))
-        }
-        (Err(_), Ok(_)) => {
-            // FIXME: print function name
-            Ok((None, "function pointer".to_string(), 16))
-        }
-        (Err(_), Err(_)) => Err(()),
-        (Ok(_), Ok(_)) => unreachable!(),
+    if let Ok(alloc) = ecx.memory.get_raw(ptr.alloc_id) {
+        let s = print_alloc(ecx.tcx.data_layout.pointer_size.bytes(), ptr, alloc, size);
+        debug_assert!(ecx.memory.get_fn(ptr.into()).is_err());
+        Ok((Some(ptr.alloc_id.0), s, alloc.len() as u64))
+    } else if let Ok(_) = ecx.memory.get_fn(ptr.into()) {
+        // FIXME: print function name
+        Ok((None, "function pointer".to_string(), 16))
+    } else {
+        Err(())
     }
 }
 
