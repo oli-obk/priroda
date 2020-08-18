@@ -1,21 +1,15 @@
-#![feature(
-    rustc_private,
-    decl_macro,
-    plugin,
-    try_blocks,
-    proc_macro_hygiene
-)]
+#![feature(rustc_private, decl_macro, plugin, try_blocks, proc_macro_hygiene)]
 #![feature(never_type)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
 
-extern crate rustc_middle;
 extern crate rustc_ast;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_interface;
+extern crate rustc_middle;
 extern crate rustc_mir;
 extern crate rustc_span;
 extern crate rustc_target;
@@ -52,11 +46,11 @@ use std::ops::FnOnce;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use rustc_middle::mir;
-use rustc_middle::ty::TyCtxt;
 use rustc_driver::Compilation;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
+use rustc_middle::mir;
+use rustc_middle::ty::TyCtxt;
 
 use promising_future::future_promise;
 use rocket::response::content::*;
@@ -339,7 +333,11 @@ fn main() {
                     }
 
                     impl rustc_driver::Callbacks for PrirodaCompilerCalls {
-                        fn after_analysis<'tcx>(&mut self, compiler: &interface::Compiler, queries: &'tcx rustc_interface::Queries<'tcx>) -> Compilation {
+                        fn after_analysis<'tcx>(
+                            &mut self,
+                            compiler: &interface::Compiler,
+                            queries: &'tcx rustc_interface::Queries<'tcx>,
+                        ) -> Compilation {
                             compiler.session().abort_if_errors();
 
                             queries.global_ctxt().unwrap().peek_mut().enter(|tcx| {

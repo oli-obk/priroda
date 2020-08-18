@@ -22,7 +22,10 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
     } else {
         return; // Unwinding, but no cleanup for current frame needed
     };
-    let mir::Location { block, statement_index: stmt } = location;
+    let mir::Location {
+        block,
+        statement_index: stmt,
+    } = location;
     let blck = &ecx.frame().body.basic_blocks()[block];
 
     if stmt == blck.statements.len() {
@@ -71,7 +74,9 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
                     ParamEnv::reveal_all(),
                     &substs,
                 );
-                ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), def_id, substs).unwrap().unwrap()
+                ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), def_id, substs)
+                    .unwrap()
+                    .unwrap()
             }
             _ => {
                 panic!("can't handle callee of type {:?}", func.layout.ty);
@@ -97,7 +102,9 @@ fn insert_stack_traces_for_instance<'a, 'tcx: 'a>(
 
     let _: ::miri::InterpResult = try {
         let args = if let Some(args) = args {
-            args.into_iter().map(|op| ecx.eval_operand(op, None)).collect::<Result<Vec<_>, _>>()?
+            args.into_iter()
+                .map(|op| ecx.eval_operand(op, None))
+                .collect::<Result<Vec<_>, _>>()?
         } else {
             return;
         };
