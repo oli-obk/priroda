@@ -1,6 +1,6 @@
-use rustc_middle::mir;
 use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
 use rustc_index::vec::Idx;
+use rustc_middle::mir;
 use rustc_mir::interpret::Machine;
 use std::collections::{HashMap, HashSet};
 use std::iter::Iterator;
@@ -83,9 +83,9 @@ impl<'a> LocalBreakpoints<'a> {
         if let Some(location) = location {
             match self {
                 LocalBreakpoints::NoBp => false,
-                LocalBreakpoints::SomeBps(bps) => {
-                    bps.iter().any(|bp| bp.1 == location.block && bp.2 == location.statement_index)
-                },
+                LocalBreakpoints::SomeBps(bps) => bps
+                    .iter()
+                    .any(|bp| bp.1 == location.block && bp.2 == location.statement_index),
             }
         } else {
             // Unwinding, but no cleanup for this frame
@@ -173,7 +173,8 @@ pub fn is_ret(ecx: &InterpCx) -> bool {
             let basic_block = &frame.body.basic_blocks()[location.block];
 
             match basic_block.terminator().kind {
-                rustc_middle::mir::TerminatorKind::Return | rustc_middle::mir::TerminatorKind::Resume => {
+                rustc_middle::mir::TerminatorKind::Return
+                | rustc_middle::mir::TerminatorKind::Resume => {
                     location.statement_index >= basic_block.statements.len()
                 }
                 _ => false,

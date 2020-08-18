@@ -76,9 +76,7 @@ pub fn render_source(
         if stmt == frame.body[block].statements.len() {
             vec![frame.body[block].terminator().source_info.span]
         } else {
-            vec![frame.body[block].statements[stmt]
-                .source_info
-                .span]
+            vec![frame.body[block].statements[stmt].source_info.span]
         }
     } else {
         vec![frame.body.span]

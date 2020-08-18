@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use rustc_middle::mir::interpret::{Allocation, Pointer, PointerArithmetic};
-use rustc_target::abi::Size;
 use rustc_middle::ty::Instance;
+use rustc_target::abi::Size;
 
 use crate::*;
 
@@ -81,7 +81,8 @@ fn eq_alloc(
     a_align == b_align
         && a_mut == b_mut
         && a_size == b_size
-        && a.inspect_with_undef_and_ptr_outside_interpreter(0 .. a.len()) == b.inspect_with_undef_and_ptr_outside_interpreter(0 .. b.len())
+        && a.inspect_with_undef_and_ptr_outside_interpreter(0..a.len())
+            == b.inspect_with_undef_and_ptr_outside_interpreter(0..b.len())
         && a.relocations() == b.relocations()
         && a.init_mask() == b.init_mask()
 }
@@ -102,10 +103,9 @@ pub fn step_callback(pcx: &mut PrirodaContext) {
                     }
                 }
 
-                alloc_trace.trace_points.push((
-                    *pcx.step_count,
-                    AllocTracePoint::Changed(alloc.clone()),
-                ));
+                alloc_trace
+                    .trace_points
+                    .push((*pcx.step_count, AllocTracePoint::Changed(alloc.clone())));
             } else if let Some(&(_, AllocTracePoint::Deallocated)) = alloc_trace.trace_points.last()
             {
             } else if alloc_trace.trace_points.is_empty() {

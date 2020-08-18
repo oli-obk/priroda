@@ -1,13 +1,13 @@
-use rustc_middle::mir::{self, interpret::{InterpError, UndefinedBehaviorInfo}};
-use rustc_middle::ty::{
-    subst::Subst,
-    ParamEnv, TyKind, TyS, TypeAndMut,
+use rustc_middle::mir::{
+    self,
+    interpret::{InterpError, UndefinedBehaviorInfo},
 };
-use rustc_target::abi::{Abi, Size};
+use rustc_middle::ty::{subst::Subst, ParamEnv, TyKind, TyS, TypeAndMut};
 use rustc_mir::interpret::MemPlaceMeta;
+use rustc_target::abi::{Abi, Size};
 
 use miri::{
-    Allocation, AllocExtra, Frame, Immediate, InterpResult, OpTy, Operand, Pointer, Scalar,
+    AllocExtra, Allocation, Frame, Immediate, InterpResult, OpTy, Operand, Pointer, Scalar,
     ScalarMaybeUninit, Tag,
 };
 
@@ -32,15 +32,18 @@ pub fn render_locals<'tcx>(
         .local_decls
         .iter_enumerated()
         .map(|(id, local_decl)| {
-            let name = body.var_debug_info.iter().find(|var_debug_info| {
-                if var_debug_info.place.projection.is_empty() {
-                    var_debug_info.place.local == id
-                } else {
-                    false
-                }
-            }).map(|var_debug_info| var_debug_info
-                .name.as_str().to_string()
-            ).unwrap_or_else(String::new);
+            let name = body
+                .var_debug_info
+                .iter()
+                .find(|var_debug_info| {
+                    if var_debug_info.place.projection.is_empty() {
+                        var_debug_info.place.local == id
+                    } else {
+                        false
+                    }
+                })
+                .map(|var_debug_info| var_debug_info.name.as_str().to_string())
+                .unwrap_or_else(String::new);
 
             // FIXME Don't panic when trying to read from uninit variable.
             // Panic message:
@@ -170,9 +173,13 @@ fn pp_operand<'tcx>(
                     if let Ok(allocation) = ecx.memory.get_raw(ptr.alloc_id) {
                         let offset = ptr.offset.bytes();
                         if (offset as u128) < allocation.len() as u128 {
-                            let alloc_bytes = &allocation.inspect_with_undef_and_ptr_outside_interpreter(
-                                offset as usize .. (offset as usize).checked_add(len as usize).ok_or(err())?,
-                            );
+                            let alloc_bytes = &allocation
+                                .inspect_with_undef_and_ptr_outside_interpreter(
+                                    offset as usize
+                                        ..(offset as usize)
+                                            .checked_add(len as usize)
+                                            .ok_or(err())?,
+                                );
                             let s = String::from_utf8_lossy(alloc_bytes);
                             return Ok(format!("\"{}\"", s));
                         }
@@ -322,7 +329,10 @@ pub fn print_ptr(
     ptr: Pointer<Tag>,
     size: Option<u64>,
 ) -> Result<(Option<u64>, String, u64), ()> {
-    match (ecx.memory.get_raw(ptr.alloc_id), ecx.memory.get_fn(ptr.into())) {
+    match (
+        ecx.memory.get_raw(ptr.alloc_id),
+        ecx.memory.get_fn(ptr.into()),
+    ) {
         (Ok(alloc), Err(_)) => {
             let s = print_alloc(ecx.tcx.data_layout.pointer_size.bytes(), ptr, alloc, size);
             Ok((Some(ptr.alloc_id.0), s, alloc.len() as u64))
@@ -364,7 +374,14 @@ pub fn print_alloc(
                 .is_range_initialized(Size::from_bytes(i), Size::from_bytes(i + 1))
                 .is_ok()
             {
-                write!(&mut s, "{:02x}", alloc.inspect_with_undef_and_ptr_outside_interpreter(i as usize .. i as usize + 1)[0]).unwrap();
+                write!(
+                    &mut s,
+                    "{:02x}",
+                    alloc
+                        .inspect_with_undef_and_ptr_outside_interpreter(i as usize..i as usize + 1)
+                        [0]
+                )
+                .unwrap();
             } else {
                 let ub_chars = [
                     '∅', '∆', '∇', '∓', '∞', '⊙', '⊠', '⊘', '⊗', '⊛', '⊝', '⊡', '⊠',

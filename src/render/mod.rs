@@ -3,8 +3,8 @@ pub mod locals;
 mod source;
 
 use rustc_hir::definitions::DefPathData;
-use rustc_target::abi::Size;
 use rustc_mir::interpret::Machine;
+use rustc_target::abi::Size;
 
 use horrorshow::{Raw, Template};
 use rocket::response::content::Html;

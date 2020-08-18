@@ -72,11 +72,7 @@ pub fn render_html<'tcx>(frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakp
             targets
                 .into_iter()
                 .map(|target| (block, target, "green"))
-                .chain(
-                    unwind
-                        .into_iter()
-                        .map(|target| (block, target, "red"))
-                )
+                .chain(unwind.into_iter().map(|target| (block, target, "red")))
                 .map(|(from, to, color)| format!(
                     "'bb{}->bb{}':'{}'",
                     from.index(),
@@ -182,7 +178,10 @@ fn write_node_label<W: Write>(
     if !data.statements.is_empty() {
         write!(w, r#"<tr><td align="left" balign="left">"#)?;
         for (statement_index, statement) in data.statements.iter().enumerate() {
-            if breakpoints.breakpoint_exists(Some(Location { block, statement_index})) {
+            if breakpoints.breakpoint_exists(Some(Location {
+                block,
+                statement_index,
+            })) {
                 write!(w, "+ ")?;
             } else {
                 write!(w, "&nbsp; ")?;
