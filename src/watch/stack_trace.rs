@@ -17,7 +17,7 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext) {
         .collect::<Vec<_>>();
     insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);
 
-    let location = if let Some(location) = ecx.frame().loc {
+    let location = if let Some(location) = ecx.frame().loc().ok() {
         location
     } else {
         return; // Unwinding, but no cleanup for current frame needed
@@ -72,7 +72,7 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
                 let substs = ecx.tcx.subst_and_normalize_erasing_regions(
                     ecx.frame().instance.substs,
                     ParamEnv::reveal_all(),
-                    substs,
+                    *substs,
                 );
                 ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), *def_id, substs)
                     .unwrap()

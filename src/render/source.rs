@@ -71,7 +71,7 @@ pub fn render_source(
         return Box::new(FnRenderer::new(|_| {}));
     }
     let frame = frame.unwrap();
-    let mut instr_spans = if let Some(location) = frame.loc {
+    let mut instr_spans = if let Some(location) = frame.loc().ok() {
         let stmt = location.statement_index;
         let block = location.block;
         if stmt == frame.body[block].statements.len() {
