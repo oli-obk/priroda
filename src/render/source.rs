@@ -1,8 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use miri::{Frame, FrameData, Tag};
+use miri::{FrameData, Tag};
 use rustc_middle::ty::TyCtxt;
+use rustc_mir::interpret::Frame;
 use rustc_span::Span;
 
 use horrorshow::prelude::*;
@@ -138,7 +139,7 @@ pub fn render_source(
         String::new()
     };
 
-    box_html! {
+    horrorshow::box_html! {
         pre {
             code(id="the_code", style=style) {
                 @ for (sp, source) in highlighted_sources {

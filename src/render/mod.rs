@@ -3,13 +3,11 @@ pub mod locals;
 mod source;
 
 use rustc_hir::definitions::DefPathData;
-use rustc_mir::interpret::Machine;
+use rustc_mir::interpret::{AllocId, Machine, Pointer};
 use rustc_target::abi::Size;
 
 use horrorshow::{Raw, Template};
 use rocket::response::content::Html;
-
-use miri::{AllocId, Pointer};
 
 use crate::step::Breakpoint;
 use crate::PrirodaContext;
@@ -120,7 +118,7 @@ pub fn render_main_window(
     template(
         pcx,
         filename,
-        html! {
+        horrorshow::html! {
             div(id="left") {
                 div(id="commands") {
                     @ if is_active_stack_frame {
@@ -197,7 +195,7 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
     template(
         pcx,
         format!("Allocations with pointers to Allocation {}", alloc_id),
-        html! {
+        horrorshow::html! {
             @for id in allocs {
                 a(href=format!("/ptr/{}", id)) { : format!("Allocation {}", id) }
                 br;
@@ -227,7 +225,7 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
     template(
         pcx,
         format!("Allocation {}", alloc_id),
-        html! {
+        horrorshow::html! {
             span(style="font-family: monospace") {
                 : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = rest)
             }

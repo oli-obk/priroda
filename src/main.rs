@@ -13,9 +13,12 @@ extern crate rustc_middle;
 extern crate rustc_mir;
 extern crate rustc_span;
 extern crate rustc_target;
+extern crate rustc_type_ir;
 
 #[macro_use]
 extern crate rocket;
+#[macro_use]
+extern crate rental;
 
 mod render;
 mod step;
@@ -155,18 +158,6 @@ impl PrirodaSender {
                     .to_string(),
             )),
         }
-    }
-}
-
-macro action_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
-    #[get($route)]
-    pub fn $name(
-        sender: rocket::State<crate::PrirodaSender>
-        $(,$arg:$arg_ty)*
-    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
-        sender.do_work(move |$pcx| {
-            rocket::response::Flash::success(rocket::response::Redirect::to("/"), (||$body)())
-        })
     }
 }
 

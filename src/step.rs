@@ -244,124 +244,228 @@ fn parse_def_id(s: &str) -> Result<DefId, String> {
 
 pub mod step_routes {
     use super::*;
-    use crate::action_route;
 
     pub fn routes() -> Vec<::rocket::Route> {
         routes![restart, single, single_back, next, return_, continue_]
     }
 
-    action_route!(restart: "/restart", |pcx| {
-        pcx.restart();
-        "restarted".to_string()
-    });
-
-    action_route!(single: "/single", |pcx| {
-        step(pcx, |_ecx| ShouldContinue::Stop)
-    });
-
-    action_route!(single_back: "/single_back", |pcx| {
-        let orig_step_count = *pcx.step_count;
-        pcx.restart();
-        *pcx.step_count = orig_step_count;
-        if *pcx.step_count > 0 {
-            *pcx.step_count -= 1;
-            for _ in 0..*pcx.step_count {
-                match pcx.ecx.step() {
-                    Ok(true) => crate::watch::step_callback(pcx), // Rebuild traces till the current instruction
-                    res => return format!("Miri is not deterministic causing error {:?}", res),
-                }
-            }
-            "stepped back".to_string()
-        } else {
-            "already at the start".to_string()
-        }
-    });
-
-    action_route!(next: "/next", |pcx| {
-        let frame = Machine::stack(&pcx.ecx).len();
-        let (block, stmt): (Option<mir::BasicBlock>, _) = if let Some(location) = pcx.ecx.frame().loc {
-            (Some(location.block), Some(location.statement_index))
-        } else {
-            (None, None)
-        };
-        step(pcx, move |ecx| {
-            let (curr_block, curr_stmt) = if let Some(location) = ecx.frame().loc {
-                (Some(location.block), Some(location.statement_index))
-            } else {
-                (None, None)
-            };
-            if Machine::stack(&ecx).len() <= frame && (block < curr_block || stmt < curr_stmt) {
-                ShouldContinue::Stop
-            } else {
-                ShouldContinue::Continue
-            }
+    #[get("/restart")]
+    fn restart(
+        sender: rocket::State<crate::PrirodaSender>,
+    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+        sender.do_work(move |pcx| {
+            rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
+                pcx.restart();
+                "restarted".to_string()
+            })
         })
-    });
+    }
 
-    action_route!(return_: "/return", |pcx| {
-        let frame = Machine::stack(&pcx.ecx).len();
-        step(pcx, |ecx| {
-            if Machine::stack(&ecx).len() <= frame && is_ret(&ecx) {
-                ShouldContinue::Stop
-            } else {
-                ShouldContinue::Continue
-            }
+    #[get("/single")]
+    fn single(
+        sender: rocket::State<crate::PrirodaSender>,
+    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+        sender.do_work(move |pcx| {
+            rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
+                step(pcx, |_ecx| ShouldContinue::Stop)
+            })
         })
-    });
+    }
+    #[get("/single_back")]
+    fn single_back(
+        sender: rocket::State<crate::PrirodaSender>,
+    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+        sender.do_work(move |pcx| {
+            rocket::response::Flash::success(
+                rocket::response::Redirect::to("/"),
+                (|| {
+                    let orig_step_count = *pcx.step_count;
+                    pcx.restart();
+                    *pcx.step_count = orig_step_count;
+                    if *pcx.step_count > 0 {
+                        *pcx.step_count -= 1;
+                        for _ in 0..*pcx.step_count {
+                            match pcx.ecx.step() {
+                                Ok(true) => crate::watch::step_callback(pcx), // Rebuild traces till the current instruction
+                                res => {
+                                    return format!(
+                                        "Miri is not deterministic causing error {:?}",
+                                        res
+                                    )
+                                }
+                            }
+                        }
+                        "stepped back".to_string()
+                    } else {
+                        "already at the start".to_string()
+                    }
+                })(),
+            )
+        })
+    }
 
-    action_route!(continue_: "/continue", |pcx| {
-        step(pcx, |_ecx| ShouldContinue::Continue)
-    });
+    #[get("/next")]
+    fn next(
+        sender: rocket::State<crate::PrirodaSender>,
+    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+        sender.do_work(move |pcx| {
+            rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
+                let frame = Machine::stack(&pcx.ecx).len();
+                let (block, stmt): (Option<mir::BasicBlock>, _) =
+                    if let Some(location) = pcx.ecx.frame().loc {
+                        (Some(location.block), Some(location.statement_index))
+                    } else {
+                        (None, None)
+                    };
+                step(pcx, move |ecx| {
+                    let (curr_block, curr_stmt) = if let Some(location) = ecx.frame().loc {
+                        (Some(location.block), Some(location.statement_index))
+                    } else {
+                        (None, None)
+                    };
+                    if Machine::stack(&ecx).len() <= frame
+                        && (block < curr_block || stmt < curr_stmt)
+                    {
+                        ShouldContinue::Stop
+                    } else {
+                        ShouldContinue::Continue
+                    }
+                })
+            })
+        })
+    }
+
+    #[get("/return")]
+    fn return_(
+        sender: rocket::State<crate::PrirodaSender>,
+    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+        sender.do_work(move |pcx| {
+            rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
+                let frame = Machine::stack(&pcx.ecx).len();
+                step(pcx, |ecx| {
+                    if Machine::stack(&ecx).len() <= frame && is_ret(&ecx) {
+                        ShouldContinue::Stop
+                    } else {
+                        ShouldContinue::Continue
+                    }
+                })
+            })
+        })
+    }
+
+    #[get("/continue")]
+    fn continue_(
+        sender: rocket::State<crate::PrirodaSender>,
+    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+        sender.do_work(move |pcx| {
+            rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
+                step(pcx, |_ecx| ShouldContinue::Continue)
+            })
+        })
+    }
 }
 
 pub mod bp_routes {
     use super::*;
-    use crate::action_route;
     use std::path::PathBuf;
 
     pub fn routes() -> Vec<::rocket::Route> {
         routes![add_here, add, remove, remove_all]
     }
 
-    action_route!(add_here: "/add_here", |pcx| {
-        let frame = pcx.ecx.frame();
-        if let Some(location) = frame.loc {
-            pcx.config.bptree.add_breakpoint(Breakpoint(frame.instance.def_id(), location.block, location.statement_index));
-            format!("Breakpoint added for {:?}@{}:{}", frame.instance.def_id(), location.block.index(), location.statement_index)
-        } else {
-            format!("Can't set breakpoint for unwinding without cleanup yet")
-        }
-    });
-
-    action_route!(add: "/add/<path..>", |pcx, path: PathBuf| {
-        let path = path.to_string_lossy();
-        let res = parse_breakpoint_from_url(&path);
-        match res {
-            Ok(breakpoint) => {
-                pcx.config.bptree.add_breakpoint(breakpoint);
-                format!("Breakpoint added for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
-            }
-            Err(e) => e,
-        }
-    });
-
-    action_route!(remove: "/remove/<path..>", |pcx, path: PathBuf| {
-        let path = path.to_string_lossy();
-        let res = parse_breakpoint_from_url(&path);
-        match res {
-            Ok(breakpoint) => {
-                if pcx.config.bptree.remove_breakpoint(breakpoint) {
-                    format!("Breakpoint removed for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
+    #[get("/add_here")]
+    pub fn add_here(
+        sender: rocket::State<crate::PrirodaSender>,
+    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+        sender.do_work(move |pcx| {
+            rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
+                let frame = pcx.ecx.frame();
+                if let Some(location) = frame.loc {
+                    pcx.config.bptree.add_breakpoint(Breakpoint(
+                        frame.instance.def_id(),
+                        location.block,
+                        location.statement_index,
+                    ));
+                    format!(
+                        "Breakpoint added for {:?}@{}:{}",
+                        frame.instance.def_id(),
+                        location.block.index(),
+                        location.statement_index
+                    )
                 } else {
-                    format!("No breakpoint for for {:?}@{}:{}", breakpoint.0, breakpoint.1.index(), breakpoint.2)
+                    format!("Can't set breakpoint for unwinding without cleanup yet")
                 }
-            }
-            Err(e) => e,
-        }
-    });
+            })
+        })
+    }
 
-    action_route!(remove_all: "/remove_all", |pcx| {
-        pcx.config.bptree.remove_all();
-        "All breakpoints removed".to_string()
-    });
+    #[get("/add/<path..>")]
+    pub fn add(
+        sender: rocket::State<crate::PrirodaSender>,
+        path: PathBuf,
+    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+        sender.do_work(move |pcx| {
+            rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
+                let path = path.to_string_lossy();
+                let res = parse_breakpoint_from_url(&path);
+                match res {
+                    Ok(breakpoint) => {
+                        pcx.config.bptree.add_breakpoint(breakpoint);
+                        format!(
+                            "Breakpoint added for {:?}@{}:{}",
+                            breakpoint.0,
+                            breakpoint.1.index(),
+                            breakpoint.2
+                        )
+                    }
+                    Err(e) => e,
+                }
+            })
+        })
+    }
+
+    #[get("/remove/<path..>")]
+    pub fn remove(
+        sender: rocket::State<crate::PrirodaSender>,
+        path: PathBuf,
+    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+        sender.do_work(move |pcx| {
+            rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
+                let path = path.to_string_lossy();
+                let res = parse_breakpoint_from_url(&path);
+                match res {
+                    Ok(breakpoint) => {
+                        if pcx.config.bptree.remove_breakpoint(breakpoint) {
+                            format!(
+                                "Breakpoint removed for {:?}@{}:{}",
+                                breakpoint.0,
+                                breakpoint.1.index(),
+                                breakpoint.2
+                            )
+                        } else {
+                            format!(
+                                "No breakpoint for for {:?}@{}:{}",
+                                breakpoint.0,
+                                breakpoint.1.index(),
+                                breakpoint.2
+                            )
+                        }
+                    }
+                    Err(e) => e,
+                }
+            })
+        })
+    }
+
+    #[get("/remove_all")]
+    pub fn remove_all(
+        sender: rocket::State<crate::PrirodaSender>,
+    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+        sender.do_work(move |pcx| {
+            rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
+                pcx.config.bptree.remove_all();
+                "All breakpoints removed".to_string()
+            })
+        })
+    }
 }

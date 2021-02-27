@@ -61,7 +61,7 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
 
         match func.layout.ty.kind() {
             ty::FnPtr(_) => {
-                let fn_ptr = ecx.read_scalar(&func)?.check_init().ok()?;
+                let fn_ptr = ecx.read_scalar(&func)?.check_init()?;
                 if let Ok(instance) = ecx.memory.get_fn(fn_ptr)?.as_instance() {
                     instance
                 } else {
@@ -74,7 +74,7 @@ fn instance_for_call_operand<'a, 'tcx: 'a>(
                     ParamEnv::reveal_all(),
                     substs,
                 );
-                ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), def_id, substs)
+                ty::Instance::resolve(*ecx.tcx, ParamEnv::reveal_all(), *def_id, substs)
                     .unwrap()
                     .unwrap()
             }

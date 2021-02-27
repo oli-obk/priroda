@@ -3,6 +3,7 @@ use std::fmt::Write;
 
 use rustc_middle::mir::interpret::{Allocation, Pointer, PointerArithmetic};
 use rustc_middle::ty::Instance;
+use rustc_mir::interpret::AllocId;
 use rustc_target::abi::Size;
 
 use crate::*;
@@ -81,8 +82,8 @@ fn eq_alloc(
     a_align == b_align
         && a_mut == b_mut
         && a_size == b_size
-        && a.inspect_with_undef_and_ptr_outside_interpreter(0..a.len())
-            == b.inspect_with_undef_and_ptr_outside_interpreter(0..b.len())
+        && a.inspect_with_uninit_and_ptr_outside_interpreter(0..a.len())
+            == b.inspect_with_uninit_and_ptr_outside_interpreter(0..b.len())
         && a.relocations() == b.relocations()
         && a.init_mask() == b.init_mask()
 }
@@ -173,8 +174,18 @@ pub fn continue_and_show(sender: State<PrirodaSender>) -> RResult<Html<String>> 
     show(sender)
 }
 
-action_route!(add: "/add/<id>", |pcx, id: u64| {
-    pcx.traces.alloc_traces.insert(AllocId(id), AllocTrace::new());
-    step_callback(pcx);
-    "".to_string()
-});
+#[get("/add/<id>")]
+pub fn add(
+    sender: rocket::State<crate::PrirodaSender>,
+    id: u64,
+) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+    sender.do_work(move |pcx| {
+        rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
+            pcx.traces
+                .alloc_traces
+                .insert(AllocId(id), AllocTrace::new());
+            step_callback(pcx);
+            "".to_string()
+        })
+    })
+}
