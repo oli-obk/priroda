@@ -267,10 +267,7 @@ pub mod routes {
         sender: rocket::State<'_, crate::PrirodaSender>,
         flash: FlashString,
     ) -> crate::RResult<Html<String>> {
-        sender.do_work(move |pcx| {
-            let pcx = &*pcx;
-            (|| render::render_main_window(pcx, None, flash.0))()
-        })
+        sender.do_work(move |pcx| render::render_main_window(pcx, None, flash.0))
     }
 
     #[get("/frame/<frame>")]

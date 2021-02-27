@@ -178,14 +178,12 @@ pub fn continue_and_show(sender: State<'_, PrirodaSender>) -> RResult<Html<Strin
 pub fn add(
     sender: rocket::State<'_, crate::PrirodaSender>,
     id: u64,
-) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
+) -> crate::RResult<rocket::response::Redirect> {
     sender.do_work(move |pcx| {
-        rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
-            pcx.traces
-                .alloc_traces
-                .insert(AllocId(id), AllocTrace::new());
-            step_callback(pcx);
-            "".to_string()
-        })
+        pcx.traces
+            .alloc_traces
+            .insert(AllocId(id), AllocTrace::new());
+        step_callback(pcx);
+        rocket::response::Redirect::to("/")
     })
 }

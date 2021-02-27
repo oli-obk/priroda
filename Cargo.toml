@@ -18,7 +18,7 @@ miri = { git = "https://github.com/rust-lang/miri.git", rev = "ea86335318fd06ec9
 log = "0.4"
 env_logger = "0.7"
 
-serde = {version="1.0", features=["derive"]}
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 open = "1.4.0"

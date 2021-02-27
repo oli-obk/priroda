@@ -118,11 +118,9 @@ fn create_ecx<'mir, 'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
             tracked_call_id: None,
             validate: true,
             stacked_borrows: false,
-            // Guesses
             check_alignment: miri::AlignmentCheck::None,
             track_raw: false,
             data_race_detector: false,
-            // This is the default, might be better off setting it to 0.0
             cmpxchg_weak_failure_rate: 0.8,
         },
     )
@@ -161,11 +159,8 @@ impl PrirodaSender {
 }
 
 #[get("/please_panic")]
-#[allow(unreachable_code)]
 fn please_panic(sender: State<'_, PrirodaSender>) -> RResult<()> {
-    sender.do_work(|_pcx| {
-        panic!("You requested a panic");
-    })
+    sender.do_work(|_pcx| panic!("You requested a panic"))
 }
 
 #[cfg(not(feature = "static_resources"))]
@@ -237,7 +232,7 @@ fn find_sysroot() -> String {
         return sysroot;
     }
 
-    // Taken from https://github.com/Manishearth/rust-clippy/pull/911.
+    // Taken from https://github.com/rust-lang/rust-clippy/pull/911
     let home = option_env!("RUSTUP_HOME").or(option_env!("MULTIRUST_HOME"));
     let toolchain = option_env!("RUSTUP_TOOLCHAIN").or(option_env!("MULTIRUST_TOOLCHAIN"));
     match (home, toolchain) {
@@ -362,30 +357,3 @@ fn main() {
     server(sender);
     handle.join().unwrap();
 }
-
-// fn init_logger() {
-//     const NSPACES: usize = 40;
-//     let format = |_fmt: &mut _, record: &log::Record| {
-//         // prepend spaces to indent the final string
-//         let indentation = log_settings::settings().indentation;
-//         println!(
-//             "{lvl}:{module}{depth:2}{indent:<indentation$} {text}",
-//             lvl = record.level(),
-//             module = record.module_path().unwrap_or(""),
-//             depth = indentation / NSPACES,
-//             indentation = indentation % NSPACES,
-//             indent = "",
-//             text = record.args()
-//         );
-//         Ok(())
-//     };
-
-//     let mut builder = env_logger::Builder::new();
-//     builder.format(format).filter(None, log::LevelFilter::Info);
-
-//     if std::env::var("MIRI_LOG").is_ok() {
-//         builder.parse_filters(&std::env::var("MIRI_LOG").unwrap());
-//     }
-
-//     builder.init();
-// }
