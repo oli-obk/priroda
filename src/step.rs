@@ -53,7 +53,7 @@ impl BreakpointTree {
         self.0.clear();
     }
 
-    pub fn for_def_id(&self, def_id: DefId) -> LocalBreakpoints {
+    pub fn for_def_id(&self, def_id: DefId) -> LocalBreakpoints<'_> {
         if let Some(bps) = self.0.get(&def_id) {
             LocalBreakpoints::SomeBps(bps)
         } else {
@@ -61,7 +61,7 @@ impl BreakpointTree {
         }
     }
 
-    pub fn is_at_breakpoint(&self, ecx: &InterpCx) -> bool {
+    pub fn is_at_breakpoint(&self, ecx: &InterpCx<'_>) -> bool {
         let frame = ecx.frame();
         self.for_def_id(frame.instance.def_id())
             .breakpoint_exists(frame.loc().ok())
@@ -95,12 +95,12 @@ impl<'a> LocalBreakpoints<'a> {
     }
 }
 
-pub fn step<F>(pcx: &mut PrirodaContext, continue_while: F) -> String
+pub fn step<F>(pcx: &mut PrirodaContext<'_, '_>, continue_while: F) -> String
 where
-    F: Fn(&InterpCx) -> ShouldContinue,
+    F: Fn(&InterpCx<'_>) -> ShouldContinue,
 {
     let mut message = None;
-    let ret: InterpResult<_> = try {
+    let ret: InterpResult<'_, _> = try {
         loop {
             let is_main_thread_active = pcx.ecx.get_active_thread() == 0.into();
             if is_main_thread_active && Machine::stack(&pcx.ecx).len() <= 1 && is_ret(&pcx.ecx) {
@@ -167,7 +167,7 @@ where
     message.unwrap_or_else(String::new)
 }
 
-pub fn is_ret(ecx: &InterpCx) -> bool {
+pub fn is_ret(ecx: &InterpCx<'_>) -> bool {
     if let Some(frame) = Machine::stack(&ecx).last() {
         if let Some(location) = frame.loc().ok() {
             let basic_block = &frame.body.basic_blocks()[location.block];
@@ -251,7 +251,7 @@ pub mod step_routes {
 
     #[get("/restart")]
     fn restart(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
     ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |pcx| {
             rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
@@ -263,7 +263,7 @@ pub mod step_routes {
 
     #[get("/single")]
     fn single(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
     ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |pcx| {
             rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
@@ -273,7 +273,7 @@ pub mod step_routes {
     }
     #[get("/single_back")]
     fn single_back(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
     ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |pcx| {
             rocket::response::Flash::success(
@@ -306,7 +306,7 @@ pub mod step_routes {
 
     #[get("/next")]
     fn next(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
     ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |pcx| {
             rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
@@ -337,7 +337,7 @@ pub mod step_routes {
 
     #[get("/return")]
     fn return_(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
     ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |pcx| {
             rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
@@ -355,7 +355,7 @@ pub mod step_routes {
 
     #[get("/continue")]
     fn continue_(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
     ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |pcx| {
             rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
@@ -375,7 +375,7 @@ pub mod bp_routes {
 
     #[get("/add_here")]
     pub fn add_here(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
     ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |pcx| {
             rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
@@ -401,7 +401,7 @@ pub mod bp_routes {
 
     #[get("/add/<path..>")]
     pub fn add(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
         path: PathBuf,
     ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |pcx| {
@@ -426,7 +426,7 @@ pub mod bp_routes {
 
     #[get("/remove/<path..>")]
     pub fn remove(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
         path: PathBuf,
     ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |pcx| {
@@ -459,7 +459,7 @@ pub mod bp_routes {
 
     #[get("/remove_all")]
     pub fn remove_all(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
     ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |pcx| {
             rocket::response::Flash::success(rocket::response::Redirect::to("/"), {

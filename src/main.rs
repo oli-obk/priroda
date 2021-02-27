@@ -2,9 +2,8 @@
 #![feature(never_type)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
+#![warn(rust_2018_idioms)]
 
-extern crate rustc_ast;
-extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_index;
@@ -44,7 +43,7 @@ use serde::Deserialize;
 
 use crate::step::BreakpointTree;
 
-fn should_hide_stmt(stmt: &mir::Statement) -> bool {
+fn should_hide_stmt(stmt: &mir::Statement<'_>) -> bool {
     use rustc_middle::mir::StatementKind::*;
     match stmt.kind {
         StorageLive(_) | StorageDead(_) | Nop => true,
@@ -132,18 +131,18 @@ fn create_ecx<'mir, 'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
 }
 
 pub struct PrirodaSender(
-    Mutex<::std::sync::mpsc::Sender<Box<dyn FnOnce(&mut PrirodaContext) + Send>>>,
+    Mutex<::std::sync::mpsc::Sender<Box<dyn FnOnce(&mut PrirodaContext<'_, '_>) + Send>>>,
 );
 
 impl PrirodaSender {
     fn do_work<'r, T, F>(&self, f: F) -> Result<T, Html<String>>
     where
         T: rocket::response::Responder<'r> + Send + 'static,
-        F: FnOnce(&mut PrirodaContext) -> T + Send + 'static,
+        F: FnOnce(&mut PrirodaContext<'_, '_>) -> T + Send + 'static,
     {
         let (future, promise) = future_promise();
         let sender = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        match sender.send(Box::new(move |pcx: &mut PrirodaContext| {
+        match sender.send(Box::new(move |pcx: &mut PrirodaContext<'_, '_>| {
             promise.set(f(pcx));
         })) {
             Ok(()) => match future.value() {
@@ -163,7 +162,7 @@ impl PrirodaSender {
 
 #[get("/please_panic")]
 #[allow(unreachable_code)]
-fn please_panic(sender: State<PrirodaSender>) -> RResult<()> {
+fn please_panic(sender: State<'_, PrirodaSender>) -> RResult<()> {
     sender.do_work(|_pcx| {
         panic!("You requested a panic");
     })
@@ -204,7 +203,7 @@ fn resources(path: PathBuf) -> Result<Content<&'static str>, std::io::Error> {
 }
 
 #[get("/step_count")]
-fn step_count(sender: State<PrirodaSender>) -> RResult<String> {
+fn step_count(sender: State<'_, PrirodaSender>) -> RResult<String> {
     sender.do_work(|pcx| format!("{}", pcx.step_count))
 }
 
@@ -288,7 +287,7 @@ fn main() {
                         receiver: Arc<
                             Mutex<
                                 std::sync::mpsc::Receiver<
-                                    Box<dyn FnOnce(&mut PrirodaContext) + Send>,
+                                    Box<dyn FnOnce(&mut PrirodaContext<'_, '_>) + Send>,
                                 >,
                             >,
                         >,

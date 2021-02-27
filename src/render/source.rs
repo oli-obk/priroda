@@ -62,8 +62,8 @@ rental! {
 }
 
 pub fn render_source(
-    tcx: TyCtxt,
-    frame: Option<&Frame<Tag, FrameData>>,
+    tcx: TyCtxt<'_>,
+    frame: Option<&Frame<'_, '_, Tag, FrameData<'_>>>,
 ) -> Box<dyn RenderBox + Send> {
     let before_time = ::std::time::Instant::now();
 
@@ -154,7 +154,7 @@ pub fn render_source(
     }
 }
 
-fn get_file_source_for_span(tcx: TyCtxt, sp: Span) -> Result<(String, usize, usize), String> {
+fn get_file_source_for_span(tcx: TyCtxt<'_>, sp: Span) -> Result<(String, usize, usize), String> {
     let source_map = tcx.sess.source_map();
     let _ = source_map.span_to_snippet(sp); // Ensure file src is loaded
 

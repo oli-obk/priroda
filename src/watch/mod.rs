@@ -88,7 +88,7 @@ fn eq_alloc(
         && a.init_mask() == b.init_mask()
 }
 
-pub fn step_callback(pcx: &mut PrirodaContext) {
+pub fn step_callback(pcx: &mut PrirodaContext<'_, '_>) {
     {
         let ecx = &pcx.ecx;
         let traces = &mut pcx.traces;
@@ -127,7 +127,7 @@ pub fn routes() -> Vec<::rocket::Route> {
 }
 
 #[get("/show")]
-fn show(sender: rocket::State<crate::PrirodaSender>) -> crate::RResult<Html<String>> {
+fn show(sender: rocket::State<'_, crate::PrirodaSender>) -> crate::RResult<Html<String>> {
     sender.do_work(|pcx| {
         let mut buf = String::new();
 
@@ -167,7 +167,7 @@ fn show(sender: rocket::State<crate::PrirodaSender>) -> crate::RResult<Html<Stri
 }
 
 #[get("/continue_and_show")]
-pub fn continue_and_show(sender: State<PrirodaSender>) -> RResult<Html<String>> {
+pub fn continue_and_show(sender: State<'_, PrirodaSender>) -> RResult<Html<String>> {
     sender.do_work(move |pcx| {
         crate::step::step(pcx, |_ecx| crate::step::ShouldContinue::Continue);
     })?;
@@ -176,7 +176,7 @@ pub fn continue_and_show(sender: State<PrirodaSender>) -> RResult<Html<String>> 
 
 #[get("/add/<id>")]
 pub fn add(
-    sender: rocket::State<crate::PrirodaSender>,
+    sender: rocket::State<'_, crate::PrirodaSender>,
     id: u64,
 ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
     sender.do_work(move |pcx| {

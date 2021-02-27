@@ -215,7 +215,7 @@ fn pp_operand<'tcx>(
             }
 
             for (i, adt_field) in adt_fields.iter().enumerate() {
-                let field_pretty: InterpResult<String> = try {
+                let field_pretty: InterpResult<'_, String> = try {
                     let field_op_ty = ecx.operand_field(&op_ty, i as usize)?;
                     pp_operand(ecx, field_op_ty)?
                 };
@@ -321,7 +321,7 @@ pub fn print_operand<'a, 'tcx: 'a>(
 }
 
 pub fn print_ptr(
-    ecx: &InterpCx,
+    ecx: &InterpCx<'_>,
     ptr: Pointer<Tag>,
     size: Option<u64>,
 ) -> Result<(Option<u64>, String, u64), ()> {

@@ -12,7 +12,7 @@ use rocket::response::content::Html;
 use crate::step::Breakpoint;
 use crate::PrirodaContext;
 
-pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<String> {
+pub fn template(pcx: &PrirodaContext<'_, '_>, title: String, t: impl Template) -> Html<String> {
     let mut buf = String::new();
     (horrorshow::html! {
         html {
@@ -35,7 +35,7 @@ pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<S
     Html(buf)
 }
 
-pub fn refresh_script(pcx: &PrirodaContext) -> String {
+pub fn refresh_script(pcx: &PrirodaContext<'_, '_>) -> String {
     if pcx.config.auto_refresh {
         r#"<script>
             setInterval(() => {
@@ -59,7 +59,7 @@ pub fn refresh_script(pcx: &PrirodaContext) -> String {
 }
 
 pub fn render_main_window(
-    pcx: &PrirodaContext,
+    pcx: &PrirodaContext<'_, '_>,
     display_frame: Option<usize>,
     message: String,
 ) -> Html<String> {
@@ -180,7 +180,7 @@ pub fn render_main_window(
     )
 }
 
-pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
+pub fn render_reverse_ptr(pcx: &PrirodaContext<'_, '_>, alloc_id: u64) -> Html<String> {
     let allocs: Vec<_> = pcx.ecx.memory.alloc_map().iter(|values| {
         values
             .filter_map(|(&id, (_kind, alloc))| {
@@ -204,7 +204,11 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
     )
 }
 
-pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -> Html<String> {
+pub fn render_ptr_memory(
+    pcx: &PrirodaContext<'_, '_>,
+    alloc_id: AllocId,
+    offset: u64,
+) -> Html<String> {
     let (mem, offset, rest) = if let Ok((_, mem, bytes)) = locals::print_ptr(
         &pcx.ecx,
         Pointer::new(alloc_id, Size::from_bytes(offset))
@@ -243,7 +247,7 @@ impl<'a, 'r> ::rocket::request::FromRequest<'a, 'r> for FlashString {
     type Error = !;
     fn from_request(request: &'a rocket::Request<'r>) -> rocket::request::Outcome<Self, !> {
         rocket::Outcome::Success(FlashString(
-            Option::<rocket::request::FlashMessage>::from_request(request)?
+            Option::<rocket::request::FlashMessage<'_, '_>>::from_request(request)?
                 .map(|flash| flash.msg().to_string())
                 .unwrap_or_else(String::new),
         ))
@@ -260,7 +264,7 @@ pub mod routes {
 
     #[get("/")]
     pub fn index(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
         flash: FlashString,
     ) -> crate::RResult<Html<String>> {
         sender.do_work(move |pcx| {
@@ -271,7 +275,7 @@ pub mod routes {
 
     #[get("/frame/<frame>")]
     pub fn frame(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
         flash: FlashString,
         frame: usize,
     ) -> crate::RResult<Html<String>> {
@@ -287,7 +291,7 @@ pub mod routes {
     }
     #[get("/ptr/<alloc_id>/<offset>")]
     pub fn ptr(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
         alloc_id: u64,
         offset: u64,
     ) -> crate::RResult<Html<String>> {
@@ -296,7 +300,7 @@ pub mod routes {
 
     #[get("/reverse_ptr/<ptr>")]
     fn reverse_ptr(
-        sender: rocket::State<crate::PrirodaSender>,
+        sender: rocket::State<'_, crate::PrirodaSender>,
         ptr: u64,
     ) -> crate::RResult<Html<String>> {
         sender.do_work(move |pcx| render::render_reverse_ptr(pcx, ptr))
