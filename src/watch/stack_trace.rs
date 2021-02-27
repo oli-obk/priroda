@@ -17,7 +17,7 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext<'_, '_>) {
         .collect::<Vec<_>>();
     insert_stack_trace(&mut traces.stack_traces_cpu, stack_trace.clone(), 1);
 
-    let location = if let Some(location) = ecx.frame().loc().ok() {
+    let location = if let Some(location) = ecx.frame().current_loc().ok() {
         location
     } else {
         return; // Unwinding, but no cleanup for current frame needed

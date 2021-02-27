@@ -64,7 +64,7 @@ impl BreakpointTree {
     pub fn is_at_breakpoint(&self, ecx: &InterpCx<'_>) -> bool {
         let frame = ecx.frame();
         self.for_def_id(frame.instance.def_id())
-            .breakpoint_exists(frame.loc().ok())
+            .breakpoint_exists(frame.current_loc().ok())
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Breakpoint> {
@@ -137,7 +137,7 @@ where
             crate::watch::step_callback(pcx);
 
             if let Some(frame) = Machine::stack(&pcx.ecx).last() {
-                if let Some(location) = frame.loc().ok() {
+                if let Some(location) = frame.current_loc().ok() {
                     let blck = &frame.body.basic_blocks()[location.block];
                     if location.statement_index != blck.statements.len()
                         && crate::should_hide_stmt(&blck.statements[location.statement_index])
@@ -169,7 +169,7 @@ where
 
 pub fn is_ret(ecx: &InterpCx<'_>) -> bool {
     if let Some(frame) = Machine::stack(&ecx).last() {
-        if let Some(location) = frame.loc().ok() {
+        if let Some(location) = frame.current_loc().ok() {
             let basic_block = &frame.body.basic_blocks()[location.block];
 
             match basic_block.terminator().kind {
@@ -312,17 +312,18 @@ pub mod step_routes {
             rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
                 let frame = Machine::stack(&pcx.ecx).len();
                 let (block, stmt): (Option<mir::BasicBlock>, _) =
-                    if let Some(location) = pcx.ecx.frame().loc().ok() {
+                    if let Some(location) = pcx.ecx.frame().current_loc().ok() {
                         (Some(location.block), Some(location.statement_index))
                     } else {
                         (None, None)
                     };
                 step(pcx, move |ecx| {
-                    let (curr_block, curr_stmt) = if let Some(location) = ecx.frame().loc().ok() {
-                        (Some(location.block), Some(location.statement_index))
-                    } else {
-                        (None, None)
-                    };
+                    let (curr_block, curr_stmt) =
+                        if let Some(location) = ecx.frame().current_loc().ok() {
+                            (Some(location.block), Some(location.statement_index))
+                        } else {
+                            (None, None)
+                        };
                     if Machine::stack(&ecx).len() <= frame
                         && (block < curr_block || stmt < curr_stmt)
                     {
@@ -380,7 +381,7 @@ pub mod bp_routes {
         sender.do_work(move |pcx| {
             rocket::response::Flash::success(rocket::response::Redirect::to("/"), {
                 let frame = pcx.ecx.frame();
-                if let Some(location) = frame.loc().ok() {
+                if let Some(location) = frame.current_loc().ok() {
                     pcx.config.bptree.add_breakpoint(Breakpoint(
                         frame.instance.def_id(),
                         location.block,

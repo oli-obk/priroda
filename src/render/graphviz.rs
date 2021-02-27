@@ -22,7 +22,7 @@ pub fn render_html<'tcx>(
 
     render_mir_svg(&frame.body, breakpoints, &mut rendered, None).unwrap();
 
-    let (block, statement_index) = if let Some(location) = frame.loc().ok() {
+    let (block, statement_index) = if let Some(location) = frame.current_loc().ok() {
         (location.block, location.statement_index)
     } else {
         rendered.push_str("<div style='color: red;'>Unwinding</div>");
