@@ -9,8 +9,9 @@
 // except according to those terms.
 
 use crate::step::LocalBreakpoints;
-use miri::{Frame, FrameData, Tag};
+use miri::{FrameData, Tag};
 use rustc_middle::mir::*;
+use rustc_mir::interpret::Frame;
 use std::fmt::{self, Debug, Write};
 
 pub fn render_html<'tcx>(frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakpoints) -> String {
@@ -47,7 +48,7 @@ pub fn render_html<'tcx>(frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakp
             use rustc_middle::mir::TerminatorKind::*;
             match blck.terminator().kind {
                 Goto { target } => (vec![target], None),
-                SwitchInt { ref targets, .. } => (targets.to_vec(), None),
+                SwitchInt { ref targets, .. } => (targets.all_targets().to_owned(), None),
                 Drop { target, unwind, .. } | DropAndReplace { target, unwind, .. } => {
                     (vec![target], unwind)
                 }

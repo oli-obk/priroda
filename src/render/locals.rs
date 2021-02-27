@@ -3,13 +3,10 @@ use rustc_middle::mir::{
     interpret::{InterpError, UndefinedBehaviorInfo},
 };
 use rustc_middle::ty::{subst::Subst, ParamEnv, TyKind, TyS, TypeAndMut};
-use rustc_mir::interpret::MemPlaceMeta;
+use rustc_mir::interpret::{Frame, MemPlaceMeta, Scalar, ScalarMaybeUninit};
 use rustc_target::abi::{Abi, Size};
 
-use miri::{
-    AllocExtra, Allocation, Frame, Immediate, InterpResult, OpTy, Operand, Pointer, Scalar,
-    ScalarMaybeUninit, Tag,
-};
+use miri::{AllocExtra, Tag};
 
 use horrorshow::prelude::*;
 use horrorshow::Template;
@@ -35,12 +32,11 @@ pub fn render_locals<'tcx>(
             let name = body
                 .var_debug_info
                 .iter()
-                .find(|var_debug_info| {
-                    if var_debug_info.place.projection.is_empty() {
-                        var_debug_info.place.local == id
-                    } else {
-                        false
+                .find(|var_debug_info| match var_debug_info.value {
+                    mir::VarDebugInfoContents::Place(place) => {
+                        place.projection.is_empty() && place.local == id
                     }
+                    _ => false,
                 })
                 .map(|var_debug_info| var_debug_info.name.as_str().to_string())
                 .unwrap_or_else(String::new);
@@ -52,7 +48,7 @@ pub fn render_locals<'tcx>(
             let op_ty = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if id == mir::RETURN_PLACE {
                     return_place
-                        .map(|p| ecx.place_to_op(p).unwrap())
+                        .map(|p| ecx.place_to_op(&p).unwrap())
                         .ok_or(false)
                 } else {
                     ecx.access_local(frame, id, None).map_err(|_| false)
@@ -84,7 +80,7 @@ pub fn render_locals<'tcx>(
         body.temps_iter().count(),
     );
 
-    (html! {
+    (horrorshow::html! {
         table(border="1") {
             tr {
                 td(width="20px");

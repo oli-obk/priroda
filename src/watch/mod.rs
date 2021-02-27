@@ -125,44 +125,45 @@ pub fn routes() -> Vec<::rocket::Route> {
     routes![watch::show, watch::continue_and_show, watch::add]
 }
 
-view_route!(show: "/show", |pcx| {
-    let mut buf = String::new();
+#[get("/show")]
+fn show(sender: rocket::State<crate::PrirodaSender>) -> crate::RResult<Html<String>> {
+    sender.do_work(|pcx| {
+        let mut buf = String::new();
 
-    stack_trace::show(pcx, &mut buf).unwrap();
+        stack_trace::show(pcx, &mut buf).unwrap();
 
-    let mut alloc_traces = pcx.traces.alloc_traces.iter().collect::<Vec<_>>();
-    alloc_traces.sort_by_key(|(id, _)| id.0);
-    for (alloc_id, alloc_trace) in alloc_traces {
-        if alloc_trace.trace_points.is_empty() {
-            writeln!(buf, "<h2>Alloc {} has never existed</h2>", alloc_id.0).unwrap();
-            continue;
-        }
+        let mut alloc_traces = pcx.traces.alloc_traces.iter().collect::<Vec<_>>();
+        alloc_traces.sort_by_key(|(id, _)| id.0);
+        for (alloc_id, alloc_trace) in alloc_traces {
+            if alloc_trace.trace_points.is_empty() {
+                writeln!(buf, "<h2>Alloc {} has never existed</h2>", alloc_id.0).unwrap();
+                continue;
+            }
 
-        writeln!(buf, "<h2>Alloc {}</h2>\n<table border='1'>", alloc_id.0).unwrap();
-        for (step_count, trace_point) in &alloc_trace.trace_points {
-            let content = match trace_point {
-                AllocTracePoint::Changed(alloc) => {
-                    crate::render::locals::print_alloc(
+            writeln!(buf, "<h2>Alloc {}</h2>\n<table border='1'>", alloc_id.0).unwrap();
+            for (step_count, trace_point) in &alloc_trace.trace_points {
+                let content = match trace_point {
+                    AllocTracePoint::Changed(alloc) => crate::render::locals::print_alloc(
                         pcx.ecx.memory.pointer_size().bytes(),
                         Pointer::new(*alloc_id, Size::from_bytes(0)).with_tag(miri::Tag::Untagged),
                         alloc,
-                        None
-                    )
-                }
-                AllocTracePoint::Deallocated => "Dealloc".to_string(),
-            };
-            writeln!(
-                buf,
-                "<tr>\n<td>{}</td>\n<td>{}</td>\n</tr>",
-                step_count,
-                content
-            ).unwrap();
+                        None,
+                    ),
+                    AllocTracePoint::Deallocated => "Dealloc".to_string(),
+                };
+                writeln!(
+                    buf,
+                    "<tr>\n<td>{}</td>\n<td>{}</td>\n</tr>",
+                    step_count, content
+                )
+                .unwrap();
+            }
+            writeln!(buf, "</table>\n").unwrap();
         }
-        writeln!(buf, "</table>\n").unwrap();
-    }
 
-    Html(buf)
-});
+        Html(buf)
+    })
+}
 
 #[get("/continue_and_show")]
 pub fn continue_and_show(sender: State<PrirodaSender>) -> RResult<Html<String>> {

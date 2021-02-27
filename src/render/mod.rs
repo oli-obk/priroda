@@ -16,7 +16,7 @@ use crate::PrirodaContext;
 
 pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<String> {
     let mut buf = String::new();
-    (html! {
+    (horrorshow::html! {
         html {
             head {
                 title { : title }
@@ -260,13 +260,25 @@ pub mod routes {
         routes![index, frame, frame_invalid, ptr, reverse_ptr]
     }
 
-    view_route!(index: "/", |pcx, flash: FlashString| {
-        render::render_main_window(pcx, None, flash.0)
-    });
+    #[get("/")]
+    pub fn index(
+        sender: rocket::State<crate::PrirodaSender>,
+        flash: FlashString,
+    ) -> crate::RResult<Html<String>> {
+        sender.do_work(move |pcx| {
+            let pcx = &*pcx;
+            (|| render::render_main_window(pcx, None, flash.0))()
+        })
+    }
 
-    view_route!(frame: "/frame/<frame>", |pcx, flash: FlashString, frame: usize| {
-        render::render_main_window(pcx, Some(frame), flash.0)
-    });
+    #[get("/frame/<frame>")]
+    pub fn frame(
+        sender: rocket::State<crate::PrirodaSender>,
+        flash: FlashString,
+        frame: usize,
+    ) -> crate::RResult<Html<String>> {
+        sender.do_work(move |pcx| render::render_main_window(pcx, Some(frame), flash.0))
+    }
 
     #[get("/frame/<frame>", rank = 42)] // Error handler
     fn frame_invalid(frame: String) -> BadRequest<String> {
@@ -275,12 +287,20 @@ pub mod routes {
             frame.parse::<usize>().unwrap_err()
         )))
     }
+    #[get("/ptr/<alloc_id>/<offset>")]
+    pub fn ptr(
+        sender: rocket::State<crate::PrirodaSender>,
+        alloc_id: u64,
+        offset: u64,
+    ) -> crate::RResult<Html<String>> {
+        sender.do_work(move |pcx| render::render_ptr_memory(pcx, AllocId(alloc_id), offset))
+    }
 
-    view_route!(ptr: "/ptr/<alloc_id>/<offset>", |pcx, alloc_id: u64, offset: u64| {
-        render::render_ptr_memory(pcx, AllocId(alloc_id), offset)
-    });
-
-    view_route!(reverse_ptr: "/reverse_ptr/<ptr>", |pcx, ptr: u64| {
-        render::render_reverse_ptr(pcx, ptr)
-    });
+    #[get("/reverse_ptr/<ptr>")]
+    fn reverse_ptr(
+        sender: rocket::State<crate::PrirodaSender>,
+        ptr: u64,
+    ) -> crate::RResult<Html<String>> {
+        sender.do_work(move |pcx| render::render_reverse_ptr(pcx, ptr))
+    }
 }

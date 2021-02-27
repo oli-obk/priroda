@@ -14,29 +14,8 @@ extern crate rustc_mir;
 extern crate rustc_span;
 extern crate rustc_target;
 
-extern crate lazy_static;
-extern crate regex;
-#[macro_use]
-extern crate rental;
-extern crate miri;
 #[macro_use]
 extern crate rocket;
-
-extern crate env_logger;
-extern crate log;
-extern crate log_settings;
-
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-
-extern crate open;
-extern crate promising_future;
-extern crate syntect;
-#[macro_use]
-extern crate horrorshow;
-extern crate cgraph;
 
 mod render;
 mod step;
@@ -58,7 +37,7 @@ use rocket::response::status::BadRequest;
 use rocket::response::NamedFile;
 use rocket::State;
 
-use miri::AllocId;
+use serde::Deserialize;
 
 use crate::step::BreakpointTree;
 
@@ -70,7 +49,7 @@ fn should_hide_stmt(stmt: &mir::Statement) -> bool {
     }
 }
 
-type InterpCx<'tcx> = miri::InterpCx<'tcx, 'tcx, miri::Evaluator<'tcx, 'tcx>>;
+type InterpCx<'tcx> = miri::MiriEvalContext<'tcx, 'tcx>;
 
 pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: InterpCx<'tcx>,
@@ -137,7 +116,12 @@ fn create_ecx<'mir, 'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
             tracked_call_id: None,
             validate: true,
             stacked_borrows: false,
-            check_alignment: false,
+            // Guesses
+            check_alignment: miri::AlignmentCheck::None,
+            track_raw: false,
+            data_race_detector: false,
+            // This is the default, might be better off setting it to 0.0
+            cmpxchg_weak_failure_rate: 0.8,
         },
     )
     .unwrap()
@@ -182,19 +166,6 @@ macro action_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_t
     ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
         sender.do_work(move |$pcx| {
             rocket::response::Flash::success(rocket::response::Redirect::to("/"), (||$body)())
-        })
-    }
-}
-
-macro view_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
-    #[get($route)]
-    pub fn $name(
-        sender: rocket::State<crate::PrirodaSender>
-        $(,$arg:$arg_ty)*
-    ) -> crate::RResult<Html<String>> {
-        sender.do_work(move |pcx| {
-            let $pcx = &*pcx;
-            (||$body)()
         })
     }
 }
@@ -288,7 +259,7 @@ fn find_sysroot() -> String {
 }
 
 fn main() {
-    init_logger();
+    rustc_driver::init_rustc_env_logger();
     let mut args: Vec<String> = std::env::args().collect();
 
     let sysroot_flag = String::from("--sysroot");
@@ -382,16 +353,15 @@ fn main() {
                         }
                     }
 
-                    rustc_driver::run_compiler(
+                    rustc_driver::RunCompiler::new(
                         &*args,
                         &mut PrirodaCompilerCalls {
                             step_count,
                             config,
                             receiver,
                         },
-                        None,
-                        None,
                     )
+                    .run()
                 });
             })
             .join();
@@ -403,29 +373,29 @@ fn main() {
     handle.join().unwrap();
 }
 
-fn init_logger() {
-    const NSPACES: usize = 40;
-    let format = |_fmt: &mut _, record: &log::Record| {
-        // prepend spaces to indent the final string
-        let indentation = log_settings::settings().indentation;
-        println!(
-            "{lvl}:{module}{depth:2}{indent:<indentation$} {text}",
-            lvl = record.level(),
-            module = record.module_path().unwrap_or(""),
-            depth = indentation / NSPACES,
-            indentation = indentation % NSPACES,
-            indent = "",
-            text = record.args()
-        );
-        Ok(())
-    };
+// fn init_logger() {
+//     const NSPACES: usize = 40;
+//     let format = |_fmt: &mut _, record: &log::Record| {
+//         // prepend spaces to indent the final string
+//         let indentation = log_settings::settings().indentation;
+//         println!(
+//             "{lvl}:{module}{depth:2}{indent:<indentation$} {text}",
+//             lvl = record.level(),
+//             module = record.module_path().unwrap_or(""),
+//             depth = indentation / NSPACES,
+//             indentation = indentation % NSPACES,
+//             indent = "",
+//             text = record.args()
+//         );
+//         Ok(())
+//     };
 
-    let mut builder = env_logger::Builder::new();
-    builder.format(format).filter(None, log::LevelFilter::Info);
+//     let mut builder = env_logger::Builder::new();
+//     builder.format(format).filter(None, log::LevelFilter::Info);
 
-    if std::env::var("MIRI_LOG").is_ok() {
-        builder.parse_filters(&std::env::var("MIRI_LOG").unwrap());
-    }
+//     if std::env::var("MIRI_LOG").is_ok() {
+//         builder.parse_filters(&std::env::var("MIRI_LOG").unwrap());
+//     }
 
-    builder.init();
-}
+//     builder.init();
+// }
