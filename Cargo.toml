@@ -12,7 +12,7 @@ edition = "2018"
 regex = "1.3"
 lazy_static = "1.4.0"
 rocket = "0.4.7"
-# This is the version of miri for the nightly in the rust-toolchain file. This might be superfluous
+# This needs to be the version of miri for the nightly in the `rust-toolchain` file
 miri = { git = "https://github.com/rust-lang/miri.git", rev = "ea86335318fd06ec964d9a86b187995bda1b6c7d" }
 
 log = "0.4"
