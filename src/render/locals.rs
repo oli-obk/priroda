@@ -1,11 +1,8 @@
-use rustc_middle::ty::{subst::Subst, ParamEnv, TyKind, TyS, TypeAndMut};
-use rustc_middle::{
-    mir::{
-        self,
-        interpret::{InterpError, UndefinedBehaviorInfo},
-    },
-    ty::ScalarInt,
+use rustc_middle::mir::{
+    self,
+    interpret::{InterpError, UndefinedBehaviorInfo},
 };
+use rustc_middle::ty::{subst::Subst, ParamEnv, TyKind, TypeAndMut};
 use rustc_mir::interpret::{
     Allocation, Frame, Immediate, InterpResult, MemPlaceMeta, OpTy, Operand, Pointer, Scalar,
     ScalarMaybeUninit,
@@ -137,11 +134,12 @@ fn print_scalar(val: Scalar<miri::Tag>) -> String {
             alloc = ptr.alloc_id.0,
             offset = ptr.offset.bytes()
         ),
-        Scalar::Int(ScalarInt { size, data }) => {
-            if size == 0 {
+        Scalar::Int(int) => {
+            if int.size().bytes() == 0 {
+                // Can't use `Debug` impl directly because it would be unescaped
                 "&lt;zst&gt;".to_string()
             } else {
-                format!("0x{:0width$X}", data, width = (size as usize) / 8)
+                format!("0x{:X}", int)
             }
         }
     }
@@ -153,29 +151,20 @@ fn pp_operand<'tcx>(
 ) -> InterpResult<'tcx, String> {
     let err = || InterpError::UndefinedBehavior(UndefinedBehaviorInfo::Ub(String::new()));
     match op_ty.layout.ty.kind() {
-        TyKind::RawPtr(TypeAndMut {
-            ty: &TyS {
-                kind: TyKind::Str, ..
-            },
-            ..
-        })
-        | TyKind::Ref(
-            _,
-            &TyS {
-                kind: TyKind::Str, ..
-            },
-            _,
-        ) => {
+        TyKind::RawPtr(TypeAndMut { ty, .. }) | TyKind::Ref(_, ty, _)
+            if matches!(ty.kind(), TyKind::Str) =>
+        {
             if let Operand::Immediate(val) = *op_ty {
                 if let Immediate::ScalarPair(
                     ScalarMaybeUninit::Scalar(Scalar::Ptr(ptr)),
-                    ScalarMaybeUninit::Scalar(Scalar::Int(ScalarInt { data: len, .. })),
+                    ScalarMaybeUninit::Scalar(Scalar::Int(int)),
                 ) = val
                 {
                     if let Ok(allocation) = ecx.memory.get_raw(ptr.alloc_id) {
                         let offset = ptr.offset.bytes();
                         if (offset as u128) < allocation.len() as u128 {
                             let start = offset as usize;
+                            let len = int.assert_bits(int.size());
                             let end = start.checked_add(len as usize).ok_or(err())?;
                             let alloc_bytes = &allocation
                                 .inspect_with_uninit_and_ptr_outside_interpreter(start..end);
