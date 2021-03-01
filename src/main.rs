@@ -2,9 +2,8 @@
 #![feature(never_type)]
 #![allow(unused_attributes)]
 #![recursion_limit = "5000"]
+#![warn(rust_2018_idioms)]
 
-extern crate rustc_ast;
-extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_index;
@@ -13,30 +12,12 @@ extern crate rustc_middle;
 extern crate rustc_mir;
 extern crate rustc_span;
 extern crate rustc_target;
+extern crate rustc_type_ir;
 
-extern crate lazy_static;
-extern crate regex;
-#[macro_use]
-extern crate rental;
-extern crate miri;
 #[macro_use]
 extern crate rocket;
-
-extern crate env_logger;
-extern crate log;
-extern crate log_settings;
-
-extern crate serde;
 #[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-
-extern crate open;
-extern crate promising_future;
-extern crate syntect;
-#[macro_use]
-extern crate horrorshow;
-extern crate cgraph;
+extern crate rental;
 
 mod render;
 mod step;
@@ -58,11 +39,11 @@ use rocket::response::status::BadRequest;
 use rocket::response::NamedFile;
 use rocket::State;
 
-use miri::AllocId;
+use serde::Deserialize;
 
 use crate::step::BreakpointTree;
 
-fn should_hide_stmt(stmt: &mir::Statement) -> bool {
+fn should_hide_stmt(stmt: &mir::Statement<'_>) -> bool {
     use rustc_middle::mir::StatementKind::*;
     match stmt.kind {
         StorageLive(_) | StorageDead(_) | Nop => true,
@@ -70,7 +51,7 @@ fn should_hide_stmt(stmt: &mir::Statement) -> bool {
     }
 }
 
-type InterpCx<'tcx> = miri::InterpCx<'tcx, 'tcx, miri::Evaluator<'tcx, 'tcx>>;
+type InterpCx<'tcx> = miri::MiriEvalContext<'tcx, 'tcx>;
 
 pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: InterpCx<'tcx>,
@@ -137,7 +118,10 @@ fn create_ecx<'mir, 'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
             tracked_call_id: None,
             validate: true,
             stacked_borrows: false,
-            check_alignment: false,
+            check_alignment: miri::AlignmentCheck::None,
+            track_raw: false,
+            data_race_detector: false,
+            cmpxchg_weak_failure_rate: 0.8,
         },
     )
     .unwrap()
@@ -145,18 +129,18 @@ fn create_ecx<'mir, 'tcx>(tcx: TyCtxt<'tcx>) -> InterpCx<'tcx> {
 }
 
 pub struct PrirodaSender(
-    Mutex<::std::sync::mpsc::Sender<Box<dyn FnOnce(&mut PrirodaContext) + Send>>>,
+    Mutex<::std::sync::mpsc::Sender<Box<dyn FnOnce(&mut PrirodaContext<'_, '_>) + Send>>>,
 );
 
 impl PrirodaSender {
     fn do_work<'r, T, F>(&self, f: F) -> Result<T, Html<String>>
     where
         T: rocket::response::Responder<'r> + Send + 'static,
-        F: FnOnce(&mut PrirodaContext) -> T + Send + 'static,
+        F: FnOnce(&mut PrirodaContext<'_, '_>) -> T + Send + 'static,
     {
         let (future, promise) = future_promise();
         let sender = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        match sender.send(Box::new(move |pcx: &mut PrirodaContext| {
+        match sender.send(Box::new(move |pcx: &mut PrirodaContext<'_, '_>| {
             promise.set(f(pcx));
         })) {
             Ok(()) => match future.value() {
@@ -174,37 +158,9 @@ impl PrirodaSender {
     }
 }
 
-macro action_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
-    #[get($route)]
-    pub fn $name(
-        sender: rocket::State<crate::PrirodaSender>
-        $(,$arg:$arg_ty)*
-    ) -> crate::RResult<rocket::response::Flash<rocket::response::Redirect>> {
-        sender.do_work(move |$pcx| {
-            rocket::response::Flash::success(rocket::response::Redirect::to("/"), (||$body)())
-        })
-    }
-}
-
-macro view_route($name:ident : $route:expr, |$pcx:ident $(,$arg:ident : $arg_ty:ty)*| $body:block) {
-    #[get($route)]
-    pub fn $name(
-        sender: rocket::State<crate::PrirodaSender>
-        $(,$arg:$arg_ty)*
-    ) -> crate::RResult<Html<String>> {
-        sender.do_work(move |pcx| {
-            let $pcx = &*pcx;
-            (||$body)()
-        })
-    }
-}
-
 #[get("/please_panic")]
-#[allow(unreachable_code)]
-fn please_panic(sender: State<PrirodaSender>) -> RResult<()> {
-    sender.do_work(|_pcx| {
-        panic!("You requested a panic");
-    })
+fn please_panic(sender: State<'_, PrirodaSender>) -> RResult<()> {
+    sender.do_work(|_pcx| panic!("You requested a panic"))
 }
 
 #[cfg(not(feature = "static_resources"))]
@@ -242,7 +198,7 @@ fn resources(path: PathBuf) -> Result<Content<&'static str>, std::io::Error> {
 }
 
 #[get("/step_count")]
-fn step_count(sender: State<PrirodaSender>) -> RResult<String> {
+fn step_count(sender: State<'_, PrirodaSender>) -> RResult<String> {
     sender.do_work(|pcx| format!("{}", pcx.step_count))
 }
 
@@ -276,7 +232,7 @@ fn find_sysroot() -> String {
         return sysroot;
     }
 
-    // Taken from https://github.com/Manishearth/rust-clippy/pull/911.
+    // Taken from https://github.com/rust-lang/rust-clippy/pull/911
     let home = option_env!("RUSTUP_HOME").or(option_env!("MULTIRUST_HOME"));
     let toolchain = option_env!("RUSTUP_TOOLCHAIN").or(option_env!("MULTIRUST_TOOLCHAIN"));
     match (home, toolchain) {
@@ -288,7 +244,7 @@ fn find_sysroot() -> String {
 }
 
 fn main() {
-    init_logger();
+    rustc_driver::init_rustc_env_logger();
     let mut args: Vec<String> = std::env::args().collect();
 
     let sysroot_flag = String::from("--sysroot");
@@ -326,7 +282,7 @@ fn main() {
                         receiver: Arc<
                             Mutex<
                                 std::sync::mpsc::Receiver<
-                                    Box<dyn FnOnce(&mut PrirodaContext) + Send>,
+                                    Box<dyn FnOnce(&mut PrirodaContext<'_, '_>) + Send>,
                                 >,
                             >,
                         >,
@@ -382,16 +338,15 @@ fn main() {
                         }
                     }
 
-                    rustc_driver::run_compiler(
+                    rustc_driver::RunCompiler::new(
                         &*args,
                         &mut PrirodaCompilerCalls {
                             step_count,
                             config,
                             receiver,
                         },
-                        None,
-                        None,
                     )
+                    .run()
                 });
             })
             .join();
@@ -401,31 +356,4 @@ fn main() {
     });
     server(sender);
     handle.join().unwrap();
-}
-
-fn init_logger() {
-    const NSPACES: usize = 40;
-    let format = |_fmt: &mut _, record: &log::Record| {
-        // prepend spaces to indent the final string
-        let indentation = log_settings::settings().indentation;
-        println!(
-            "{lvl}:{module}{depth:2}{indent:<indentation$} {text}",
-            lvl = record.level(),
-            module = record.module_path().unwrap_or(""),
-            depth = indentation / NSPACES,
-            indentation = indentation % NSPACES,
-            indent = "",
-            text = record.args()
-        );
-        Ok(())
-    };
-
-    let mut builder = env_logger::Builder::new();
-    builder.format(format).filter(None, log::LevelFilter::Info);
-
-    if std::env::var("MIRI_LOG").is_ok() {
-        builder.parse_filters(&std::env::var("MIRI_LOG").unwrap());
-    }
-
-    builder.init();
 }

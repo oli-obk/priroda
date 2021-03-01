@@ -3,20 +3,18 @@ pub mod locals;
 mod source;
 
 use rustc_hir::definitions::DefPathData;
-use rustc_mir::interpret::Machine;
+use rustc_mir::interpret::{AllocId, Machine, Pointer};
 use rustc_target::abi::Size;
 
 use horrorshow::{Raw, Template};
 use rocket::response::content::Html;
 
-use miri::{AllocId, Pointer};
-
 use crate::step::Breakpoint;
 use crate::PrirodaContext;
 
-pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<String> {
+pub fn template(pcx: &PrirodaContext<'_, '_>, title: String, t: impl Template) -> Html<String> {
     let mut buf = String::new();
-    (html! {
+    (horrorshow::html! {
         html {
             head {
                 title { : title }
@@ -37,7 +35,7 @@ pub fn template(pcx: &PrirodaContext, title: String, t: impl Template) -> Html<S
     Html(buf)
 }
 
-pub fn refresh_script(pcx: &PrirodaContext) -> String {
+pub fn refresh_script(pcx: &PrirodaContext<'_, '_>) -> String {
     if pcx.config.auto_refresh {
         r#"<script>
             setInterval(() => {
@@ -61,7 +59,7 @@ pub fn refresh_script(pcx: &PrirodaContext) -> String {
 }
 
 pub fn render_main_window(
-    pcx: &PrirodaContext,
+    pcx: &PrirodaContext<'_, '_>,
     display_frame: Option<usize>,
     message: String,
 ) -> Html<String> {
@@ -120,7 +118,7 @@ pub fn render_main_window(
     template(
         pcx,
         filename,
-        html! {
+        horrorshow::html! {
             div(id="left") {
                 div(id="commands") {
                     @ if is_active_stack_frame {
@@ -182,7 +180,7 @@ pub fn render_main_window(
     )
 }
 
-pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
+pub fn render_reverse_ptr(pcx: &PrirodaContext<'_, '_>, alloc_id: u64) -> Html<String> {
     let allocs: Vec<_> = pcx.ecx.memory.alloc_map().iter(|values| {
         values
             .filter_map(|(&id, (_kind, alloc))| {
@@ -197,7 +195,7 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
     template(
         pcx,
         format!("Allocations with pointers to Allocation {}", alloc_id),
-        html! {
+        horrorshow::html! {
             @for id in allocs {
                 a(href=format!("/ptr/{}", id)) { : format!("Allocation {}", id) }
                 br;
@@ -206,7 +204,11 @@ pub fn render_reverse_ptr(pcx: &PrirodaContext, alloc_id: u64) -> Html<String> {
     )
 }
 
-pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -> Html<String> {
+pub fn render_ptr_memory(
+    pcx: &PrirodaContext<'_, '_>,
+    alloc_id: AllocId,
+    offset: u64,
+) -> Html<String> {
     let (mem, offset, rest) = if let Ok((_, mem, bytes)) = locals::print_ptr(
         &pcx.ecx,
         Pointer::new(alloc_id, Size::from_bytes(offset))
@@ -227,7 +229,7 @@ pub fn render_ptr_memory(pcx: &PrirodaContext, alloc_id: AllocId, offset: u64) -
     template(
         pcx,
         format!("Allocation {}", alloc_id),
-        html! {
+        horrorshow::html! {
             span(style="font-family: monospace") {
                 : format!("{nil:.<offset$}┌{nil:─<rest$}", nil = "", offset = offset as usize, rest = rest)
             }
@@ -245,7 +247,7 @@ impl<'a, 'r> ::rocket::request::FromRequest<'a, 'r> for FlashString {
     type Error = !;
     fn from_request(request: &'a rocket::Request<'r>) -> rocket::request::Outcome<Self, !> {
         rocket::Outcome::Success(FlashString(
-            Option::<rocket::request::FlashMessage>::from_request(request)?
+            Option::<rocket::request::FlashMessage<'_, '_>>::from_request(request)?
                 .map(|flash| flash.msg().to_string())
                 .unwrap_or_else(String::new),
         ))
@@ -260,13 +262,22 @@ pub mod routes {
         routes![index, frame, frame_invalid, ptr, reverse_ptr]
     }
 
-    view_route!(index: "/", |pcx, flash: FlashString| {
-        render::render_main_window(pcx, None, flash.0)
-    });
+    #[get("/")]
+    pub fn index(
+        sender: rocket::State<'_, crate::PrirodaSender>,
+        flash: FlashString,
+    ) -> crate::RResult<Html<String>> {
+        sender.do_work(move |pcx| render::render_main_window(pcx, None, flash.0))
+    }
 
-    view_route!(frame: "/frame/<frame>", |pcx, flash: FlashString, frame: usize| {
-        render::render_main_window(pcx, Some(frame), flash.0)
-    });
+    #[get("/frame/<frame>")]
+    pub fn frame(
+        sender: rocket::State<'_, crate::PrirodaSender>,
+        flash: FlashString,
+        frame: usize,
+    ) -> crate::RResult<Html<String>> {
+        sender.do_work(move |pcx| render::render_main_window(pcx, Some(frame), flash.0))
+    }
 
     #[get("/frame/<frame>", rank = 42)] // Error handler
     fn frame_invalid(frame: String) -> BadRequest<String> {
@@ -275,12 +286,20 @@ pub mod routes {
             frame.parse::<usize>().unwrap_err()
         )))
     }
+    #[get("/ptr/<alloc_id>/<offset>")]
+    pub fn ptr(
+        sender: rocket::State<'_, crate::PrirodaSender>,
+        alloc_id: u64,
+        offset: u64,
+    ) -> crate::RResult<Html<String>> {
+        sender.do_work(move |pcx| render::render_ptr_memory(pcx, AllocId(alloc_id), offset))
+    }
 
-    view_route!(ptr: "/ptr/<alloc_id>/<offset>", |pcx, alloc_id: u64, offset: u64| {
-        render::render_ptr_memory(pcx, AllocId(alloc_id), offset)
-    });
-
-    view_route!(reverse_ptr: "/reverse_ptr/<ptr>", |pcx, ptr: u64| {
-        render::render_reverse_ptr(pcx, ptr)
-    });
+    #[get("/reverse_ptr/<ptr>")]
+    fn reverse_ptr(
+        sender: rocket::State<'_, crate::PrirodaSender>,
+        ptr: u64,
+    ) -> crate::RResult<Html<String>> {
+        sender.do_work(move |pcx| render::render_reverse_ptr(pcx, ptr))
+    }
 }

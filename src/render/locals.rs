@@ -2,14 +2,14 @@ use rustc_middle::mir::{
     self,
     interpret::{InterpError, UndefinedBehaviorInfo},
 };
-use rustc_middle::ty::{subst::Subst, ParamEnv, TyKind, TyS, TypeAndMut};
-use rustc_mir::interpret::MemPlaceMeta;
+use rustc_middle::ty::{subst::Subst, ParamEnv, TyKind, TypeAndMut};
+use rustc_mir::interpret::{
+    Allocation, Frame, Immediate, InterpResult, MemPlaceMeta, OpTy, Operand, Pointer, Scalar,
+    ScalarMaybeUninit,
+};
 use rustc_target::abi::{Abi, Size};
 
-use miri::{
-    AllocExtra, Allocation, Frame, Immediate, InterpResult, OpTy, Operand, Pointer, Scalar,
-    ScalarMaybeUninit, Tag,
-};
+use miri::{AllocExtra, Tag};
 
 use horrorshow::prelude::*;
 use horrorshow::Template;
@@ -35,12 +35,11 @@ pub fn render_locals<'tcx>(
             let name = body
                 .var_debug_info
                 .iter()
-                .find(|var_debug_info| {
-                    if var_debug_info.place.projection.is_empty() {
-                        var_debug_info.place.local == id
-                    } else {
-                        false
+                .find(|var_debug_info| match var_debug_info.value {
+                    mir::VarDebugInfoContents::Place(place) => {
+                        place.projection.is_empty() && place.local == id
                     }
+                    _ => false,
                 })
                 .map(|var_debug_info| var_debug_info.name.as_str().to_string())
                 .unwrap_or_else(String::new);
@@ -52,7 +51,7 @@ pub fn render_locals<'tcx>(
             let op_ty = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if id == mir::RETURN_PLACE {
                     return_place
-                        .map(|p| ecx.place_to_op(p).unwrap())
+                        .map(|p| ecx.place_to_op(&p).unwrap())
                         .ok_or(false)
                 } else {
                     ecx.access_local(frame, id, None).map_err(|_| false)
@@ -84,7 +83,7 @@ pub fn render_locals<'tcx>(
         body.temps_iter().count(),
     );
 
-    (html! {
+    (horrorshow::html! {
         table(border="1") {
             tr {
                 td(width="20px");
@@ -135,11 +134,12 @@ fn print_scalar(val: Scalar<miri::Tag>) -> String {
             alloc = ptr.alloc_id.0,
             offset = ptr.offset.bytes()
         ),
-        Scalar::Raw { data, size } => {
-            if size == 0 {
+        Scalar::Int(int) => {
+            if int.size().bytes() == 0 {
+                // Can't use `Debug` impl directly because it would be unescaped
                 "&lt;zst&gt;".to_string()
             } else {
-                format!("0x{:0width$X}", data, width = (size as usize) / 8)
+                format!("0x{:X}", int)
             }
         }
     }
@@ -150,33 +150,24 @@ fn pp_operand<'tcx>(
     op_ty: OpTy<'tcx, miri::Tag>,
 ) -> InterpResult<'tcx, String> {
     let err = || InterpError::UndefinedBehavior(UndefinedBehaviorInfo::Ub(String::new()));
-    match op_ty.layout.ty.kind {
-        TyKind::RawPtr(TypeAndMut {
-            ty: &TyS {
-                kind: TyKind::Str, ..
-            },
-            ..
-        })
-        | TyKind::Ref(
-            _,
-            &TyS {
-                kind: TyKind::Str, ..
-            },
-            _,
-        ) => {
+    match op_ty.layout.ty.kind() {
+        TyKind::RawPtr(TypeAndMut { ty, .. }) | TyKind::Ref(_, ty, _)
+            if matches!(ty.kind(), TyKind::Str) =>
+        {
             if let Operand::Immediate(val) = *op_ty {
                 if let Immediate::ScalarPair(
                     ScalarMaybeUninit::Scalar(Scalar::Ptr(ptr)),
-                    ScalarMaybeUninit::Scalar(Scalar::Raw { data: len, .. }),
+                    ScalarMaybeUninit::Scalar(Scalar::Int(int)),
                 ) = val
                 {
                     if let Ok(allocation) = ecx.memory.get_raw(ptr.alloc_id) {
                         let offset = ptr.offset.bytes();
                         if (offset as u128) < allocation.len() as u128 {
                             let start = offset as usize;
+                            let len = int.assert_bits(int.size());
                             let end = start.checked_add(len as usize).ok_or(err())?;
                             let alloc_bytes = &allocation
-                                .inspect_with_undef_and_ptr_outside_interpreter(start..end);
+                                .inspect_with_uninit_and_ptr_outside_interpreter(start..end);
                             let s = String::from_utf8_lossy(alloc_bytes);
                             return Ok(format!("\"{}\"", s));
                         }
@@ -189,7 +180,7 @@ fn pp_operand<'tcx>(
                 Err(err())?;
             }
 
-            let variant = ecx.read_discriminant(op_ty)?.1;
+            let variant = ecx.read_discriminant(&op_ty)?.1;
             let adt_fields = &adt_def.variants[variant].fields;
 
             let should_collapse = adt_fields.len() > 1;
@@ -213,8 +204,8 @@ fn pp_operand<'tcx>(
             }
 
             for (i, adt_field) in adt_fields.iter().enumerate() {
-                let field_pretty: InterpResult<String> = try {
-                    let field_op_ty = ecx.operand_field(op_ty, i as usize)?;
+                let field_pretty: InterpResult<'_, String> = try {
+                    let field_op_ty = ecx.operand_field(&op_ty, i as usize)?;
                     pp_operand(ecx, field_op_ty)?
                 };
 
@@ -249,11 +240,11 @@ fn pp_operand<'tcx>(
     } else {
         Err(err())?;
     }
-    let scalar = ecx.read_scalar(op_ty)?;
+    let scalar = ecx.read_scalar(&op_ty)?;
     if let ScalarMaybeUninit::Scalar(Scalar::Ptr(_)) = &scalar {
         return Ok(print_scalar_maybe_undef(scalar)); // If the value is a ptr, print it
     }
-    match op_ty.layout.ty.kind {
+    match op_ty.layout.ty.kind() {
         TyKind::Bool => {
             if scalar.to_bool()? {
                 Ok("true".to_string())
@@ -271,13 +262,10 @@ fn pp_operand<'tcx>(
         }
         TyKind::Uint(_) => Ok(format!("{0}", scalar.to_u64()?)),
         TyKind::Int(_) => Ok(format!("{0}", scalar.to_i64()?)),
-        TyKind::Float(float_ty) => {
-            use rustc_ast::ast::FloatTy::*;
-            match float_ty {
-                F32 => Ok(format!("{}", scalar.to_f32()?)),
-                F64 => Ok(format!("{}", scalar.to_f64()?)),
-            }
-        }
+        TyKind::Float(float_ty) => match float_ty {
+            rustc_type_ir::FloatTy::F32 => Ok(format!("{}", scalar.to_f32()?)),
+            rustc_type_ir::FloatTy::F64 => Ok(format!("{}", scalar.to_f64()?)),
+        },
         _ => Err(err().into()),
     }
 }
@@ -322,7 +310,7 @@ pub fn print_operand<'a, 'tcx: 'a>(
 }
 
 pub fn print_ptr(
-    ecx: &InterpCx,
+    ecx: &InterpCx<'_>,
     ptr: Pointer<Tag>,
     size: Option<u64>,
 ) -> Result<(Option<u64>, String, u64), ()> {
@@ -367,7 +355,7 @@ pub fn print_alloc(
                 .is_ok()
             {
                 let byte = alloc
-                    .inspect_with_undef_and_ptr_outside_interpreter(i as usize..i as usize + 1)[0];
+                    .inspect_with_uninit_and_ptr_outside_interpreter(i as usize..i as usize + 1)[0];
                 write!(&mut s, "{:02x}", byte).unwrap();
             } else {
                 let ub_chars = [

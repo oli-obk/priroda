@@ -1,8 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use miri::{Frame, FrameData, Tag};
+use miri::{FrameData, Tag};
 use rustc_middle::ty::TyCtxt;
+use rustc_mir::interpret::Frame;
 use rustc_span::Span;
 
 use horrorshow::prelude::*;
@@ -61,8 +62,8 @@ rental! {
 }
 
 pub fn render_source(
-    tcx: TyCtxt,
-    frame: Option<&Frame<Tag, FrameData>>,
+    tcx: TyCtxt<'_>,
+    frame: Option<&Frame<'_, '_, Tag, FrameData<'_>>>,
 ) -> Box<dyn RenderBox + Send> {
     let before_time = ::std::time::Instant::now();
 
@@ -70,7 +71,7 @@ pub fn render_source(
         return Box::new(FnRenderer::new(|_| {}));
     }
     let frame = frame.unwrap();
-    let mut instr_spans = if let Some(location) = frame.loc {
+    let mut instr_spans = if let Some(location) = frame.current_loc().ok() {
         let stmt = location.statement_index;
         let block = location.block;
         if stmt == frame.body[block].statements.len() {
@@ -138,7 +139,7 @@ pub fn render_source(
         String::new()
     };
 
-    box_html! {
+    horrorshow::box_html! {
         pre {
             code(id="the_code", style=style) {
                 @ for (sp, source) in highlighted_sources {
@@ -153,7 +154,7 @@ pub fn render_source(
     }
 }
 
-fn get_file_source_for_span(tcx: TyCtxt, sp: Span) -> Result<(String, usize, usize), String> {
+fn get_file_source_for_span(tcx: TyCtxt<'_>, sp: Span) -> Result<(String, usize, usize), String> {
     let source_map = tcx.sess.source_map();
     let _ = source_map.span_to_snippet(sp); // Ensure file src is loaded
 

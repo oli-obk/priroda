@@ -9,16 +9,20 @@
 // except according to those terms.
 
 use crate::step::LocalBreakpoints;
-use miri::{Frame, FrameData, Tag};
+use miri::{FrameData, Tag};
 use rustc_middle::mir::*;
+use rustc_mir::interpret::Frame;
 use std::fmt::{self, Debug, Write};
 
-pub fn render_html<'tcx>(frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakpoints) -> String {
+pub fn render_html<'tcx>(
+    frame: &Frame<'_, '_, Tag, FrameData<'_>>,
+    breakpoints: LocalBreakpoints<'_>,
+) -> String {
     let mut rendered = String::new();
 
     render_mir_svg(&frame.body, breakpoints, &mut rendered, None).unwrap();
 
-    let (block, statement_index) = if let Some(location) = frame.loc {
+    let (block, statement_index) = if let Some(location) = frame.current_loc().ok() {
         (location.block, location.statement_index)
     } else {
         rendered.push_str("<div style='color: red;'>Unwinding</div>");
@@ -47,7 +51,7 @@ pub fn render_html<'tcx>(frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakp
             use rustc_middle::mir::TerminatorKind::*;
             match blck.terminator().kind {
                 Goto { target } => (vec![target], None),
-                SwitchInt { ref targets, .. } => (targets.to_vec(), None),
+                SwitchInt { ref targets, .. } => (targets.all_targets().to_owned(), None),
                 Drop { target, unwind, .. } | DropAndReplace { target, unwind, .. } => {
                     (vec![target], unwind)
                 }
@@ -120,8 +124,8 @@ pub fn render_html<'tcx>(frame: &Frame<Tag, FrameData>, breakpoints: LocalBreakp
 
 /// Write a graphviz DOT graph of a list of MIRs.
 pub fn render_mir_svg<W: Write>(
-    mir: &Body,
-    breakpoints: LocalBreakpoints,
+    mir: &Body<'_>,
+    breakpoints: LocalBreakpoints<'_>,
     w: &mut W,
     promoted: Option<usize>,
 ) -> fmt::Result {
@@ -158,8 +162,8 @@ pub fn render_mir_svg<W: Write>(
 /// `LabelText::HtmlStr` from libgraphviz.)
 fn write_node_label<W: Write>(
     block: BasicBlock,
-    mir: &Body,
-    breakpoints: LocalBreakpoints,
+    mir: &Body<'_>,
+    breakpoints: LocalBreakpoints<'_>,
     promoted: Option<usize>,
     w: &mut W,
 ) -> fmt::Result {
@@ -215,8 +219,8 @@ fn write_node_label<W: Write>(
 /// Write a graphviz DOT node for the given basic block.
 fn write_node<W: Write>(
     block: BasicBlock,
-    mir: &Body,
-    breakpoints: LocalBreakpoints,
+    mir: &Body<'_>,
+    breakpoints: LocalBreakpoints<'_>,
     promoted: Option<usize>,
     w: &mut W,
 ) -> fmt::Result {
@@ -232,7 +236,7 @@ fn write_node<W: Write>(
 }
 
 /// Write graphviz DOT edges with labels between the given basic block and all of its successors.
-fn write_edges<W: Write>(source: BasicBlock, mir: &Body, w: &mut W) -> fmt::Result {
+fn write_edges<W: Write>(source: BasicBlock, mir: &Body<'_>, w: &mut W) -> fmt::Result {
     let terminator = mir[source].terminator();
     let labels = terminator.kind.fmt_successor_labels();
 
@@ -261,6 +265,6 @@ fn escape<T: Debug>(t: &T) -> String {
     escape_html(&format!("{:?}", t)).into_owned()
 }
 
-fn escape_html(s: &str) -> ::std::borrow::Cow<str> {
+fn escape_html(s: &str) -> ::std::borrow::Cow<'_, str> {
     ::rocket::http::RawStr::from_str(s).html_escape()
 }
