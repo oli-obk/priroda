@@ -1,6 +1,0 @@
-language: rust
-rust:
-- nightly
-
-install:
-- rustup component add rustc-dev llvm-tools-preview

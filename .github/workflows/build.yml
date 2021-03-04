@@ -1,0 +1,25 @@
+name: Continuous Integration
+
+on: [push, pull_request]
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      # Toolchain installation should appear as a seperate step for timing purposes
+      - run: rustup show
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: rustup component add rustfmt
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
