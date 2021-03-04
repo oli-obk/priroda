@@ -21,9 +21,6 @@ cargo miri setup
 export MIRI_SYSROOT=...
 ```
 
-And finally you need to install the `rustc-dev` and `llvm-tools-preview` components with
-`rustup component add rustc-dev llvm-tools-preview`.
-
 ## Features
 
 * Supports commands known from gdb
@@ -56,8 +53,8 @@ to Miri and fix it there.
 
 Licensed under either of
 
-* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)
-* MIT license ([LICENSE-MIT](LICENSE-MIT)
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+* MIT license ([LICENSE-MIT](LICENSE-MIT))
 
 ### Contribution
 
