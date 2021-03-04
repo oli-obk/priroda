@@ -40,8 +40,10 @@ it by yourself (or by asking on irc) for now.
 
 Check out the issues on this GitHub repository for some ideas. There's lots that
 needs to be done that I haven't documented in the issues yet, however. For more
-ideas or help with running or hacking on Priroda, you can contact me (`oli_obk`)
-on Mozilla IRC in any of the Rust IRC channels (`#rust`, `#rust-offtopic`, etc).
+ideas or help with running or hacking on Priroda, you can ask at [`#miri`] on the
+rust-lang zulip.
+
+[`#miri`]: https://rust-lang.zulipchat.com/#narrow/stream/269128-miri
 
 ### Miri
 
