@@ -21,9 +21,6 @@ cargo miri setup
 export MIRI_SYSROOT=...
 ```
 
-And finally you need to install the `rustc-dev` and `llvm-tools-preview` components with
-`rustup component add rustc-dev llvm-tools-preview`.
-
 ## Features
 
 * Supports commands known from gdb
@@ -43,8 +40,10 @@ it by yourself (or by asking on irc) for now.
 
 Check out the issues on this GitHub repository for some ideas. There's lots that
 needs to be done that I haven't documented in the issues yet, however. For more
-ideas or help with running or hacking on Priroda, you can contact me (`oli_obk`)
-on Mozilla IRC in any of the Rust IRC channels (`#rust`, `#rust-offtopic`, etc).
+ideas or help with running or hacking on Priroda, you can ask at [`#miri`] on the
+rust-lang zulip.
+
+[`#miri`]: https://rust-lang.zulipchat.com/#narrow/stream/269128-miri
 
 ### Miri
 
@@ -56,8 +55,8 @@ to Miri and fix it there.
 
 Licensed under either of
 
-* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)
-* MIT license ([LICENSE-MIT](LICENSE-MIT)
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+* MIT license ([LICENSE-MIT](LICENSE-MIT))
 
 ### Contribution
 
