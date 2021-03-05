@@ -254,7 +254,7 @@ fn main() {
     }
 
     // Eagerly initialise syntect static
-    // Makes highlighting performance clearer
+    // Makes highlighting performance profiles clearer
     render::initialise_statics();
 
     // setup http server and similar
