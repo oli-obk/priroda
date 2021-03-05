@@ -16,8 +16,6 @@ extern crate rustc_type_ir;
 
 #[macro_use]
 extern crate rocket;
-#[macro_use]
-extern crate rental;
 
 mod render;
 mod step;

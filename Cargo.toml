@@ -26,7 +26,6 @@ promising-future = "0.2"
 syntect = "4.2"
 horrorshow = "0.8"
 cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "b65e460ee323b31dca55b5541141a6b73272e72a" }
-rental = "0.5.5"
 
 # Uncomment to use local checkout of miri
 # [patch."https://github.com/rust-lang/miri.git"]

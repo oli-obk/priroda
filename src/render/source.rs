@@ -1,5 +1,5 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
+use std::{cell::RefCell, ops::Range};
 
 use miri::{FrameData, Tag};
 use rustc_middle::ty::TyCtxt;
@@ -12,8 +12,6 @@ use syntect::highlighting::{Style, ThemeSet};
 use syntect::html::{styled_line_to_highlighted_html, IncludeBackground};
 use syntect::parsing::SyntaxSet;
 use syntect::util::{split_at, LinesWithEndings};
-
-use self::rent_highlight_cache::*;
 
 lazy_static::lazy_static! {
     static ref SYNTAX_SET: SyntaxSet = SyntaxSet::load_defaults_nonewlines();
@@ -50,15 +48,9 @@ thread_local! {
     };
 }
 
-rental! {
-    mod rent_highlight_cache {
-        use syntect::highlighting::Style;
-        #[rental]
-        pub struct HighlightCacheEntry {
-            string: String,
-            highlighted: Vec<(Style, &'string str)>
-        }
-    }
+pub struct HighlightCacheEntry {
+    pub string: String,
+    pub highlighted: Vec<(Style, Range<usize>)>,
 }
 
 pub fn render_source(
@@ -110,19 +102,21 @@ pub fn render_source(
                 src.hash(&mut hasher);
                 let hash = hasher.finish();
 
-                highlight_cache
-                    .borrow_mut()
-                    .entry(hash)
-                    .or_insert_with(|| {
-                        HighlightCacheEntry::new(src, |src| {
-                            let before_time = ::std::time::Instant::now();
-                            let highlighted = syntax_highlight(src);
-                            let after_time = ::std::time::Instant::now();
-                            println!("h: {:?}", after_time - before_time);
-                            highlighted
-                        })
-                    })
-                    .rent(|highlighted| (pretty_src_path(sp), mark_span(highlighted, lo, hi)))
+                let mut cache = highlight_cache.borrow_mut();
+                let entry = cache.entry(hash).or_insert_with(|| {
+                    let before_time = ::std::time::Instant::now();
+                    let highlighted = syntax_highlight(&src);
+                    let after_time = ::std::time::Instant::now();
+                    println!("h: {:?}", after_time - before_time);
+                    HighlightCacheEntry {
+                        string: src,
+                        highlighted,
+                    }
+                });
+                (
+                    pretty_src_path(sp),
+                    mark_span(&entry.string, &entry.highlighted, lo, hi),
+                )
             })
         })
         .collect::<Vec<_>>();
@@ -174,7 +168,7 @@ fn get_file_source_for_span(tcx: TyCtxt<'_>, sp: Span) -> Result<(String, usize,
     Ok((src, lo, hi))
 }
 
-fn syntax_highlight<'a, 's>(src: &'s str) -> Vec<(Style, &'s str)> {
+fn syntax_highlight<'a, 's>(src: &'s str) -> Vec<(Style, Range<usize>)> {
     let theme = &THEME_SET.themes["Solarized (dark)"];
     let mut h = HighlightLines::new(
         &SYNTAX_SET
@@ -183,16 +177,28 @@ fn syntax_highlight<'a, 's>(src: &'s str) -> Vec<(Style, &'s str)> {
             .to_owned(),
         theme,
     );
-
+    let mut index = 0;
     let mut highlighted = Vec::new();
     for line in LinesWithEndings::from(src) {
-        highlighted.extend(h.highlight(line, &SYNTAX_SET));
+        highlighted.extend(
+            h.highlight(line, &SYNTAX_SET)
+                .into_iter()
+                .map(|(style, str)| {
+                    let idx = index;
+                    index += str.len();
+                    (style, idx..index)
+                }),
+        );
     }
     highlighted
 }
 
-fn mark_span(src: &[(Style, &str)], lo: usize, hi: usize) -> String {
-    let (before, with) = split_at(src, lo);
+fn mark_span(file_contents: &str, src: &[(Style, Range<usize>)], lo: usize, hi: usize) -> String {
+    let src = src
+        .iter()
+        .map(|(style, range)| (*style, &file_contents[range.clone()]))
+        .collect::<Vec<_>>();
+    let (before, with) = split_at(&src, lo);
     let (it, after) = split_at(&with, hi - lo);
 
     let before = styled_line_to_highlighted_html(&before, IncludeBackground::No);
