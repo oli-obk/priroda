@@ -253,6 +253,10 @@ fn main() {
         args.push(find_sysroot());
     }
 
+    // Eagerly initialise syntect static
+    // Makes highlighting performance clearer
+    render::initialise_statics();
+
     // setup http server and similar
     let (sender, receiver) = std::sync::mpsc::channel();
     let sender = PrirodaSender(Mutex::new(sender));

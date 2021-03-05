@@ -33,6 +33,10 @@ lazy_static::lazy_static! {
     };
 }
 
+pub fn initialise_statics() {
+    let _ = (&*SYNTAX_SET, &*THEME_SET);
+}
+
 pub fn pretty_src_path(span: Span) -> String {
     let span = format!("{:?}", span);
     let span = RUST_SOURCE.replace(span.as_ref(), "<rust>/").to_string();

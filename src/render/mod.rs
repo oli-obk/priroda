@@ -2,6 +2,8 @@ mod graphviz;
 pub mod locals;
 mod source;
 
+pub use source::initialise_statics;
+
 use rustc_hir::definitions::DefPathData;
 use rustc_mir::interpret::{AllocId, Machine, Pointer};
 use rustc_target::abi::Size;
