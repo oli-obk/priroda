@@ -25,6 +25,7 @@ use std::ops::FnOnce;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use miri::Evaluator;
 use rustc_driver::Compilation;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
@@ -49,7 +50,7 @@ fn should_hide_stmt(stmt: &mir::Statement<'_>) -> bool {
     }
 }
 
-type InterpCx<'tcx> = miri::MiriEvalContext<'tcx, 'tcx>;
+type InterpCx<'tcx> = rustc_mir::interpret::InterpCx<'tcx, 'tcx, Evaluator<'tcx, 'tcx>>;
 
 pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: InterpCx<'tcx>,
