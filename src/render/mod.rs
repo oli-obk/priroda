@@ -130,7 +130,7 @@ pub fn render_main_window(
                         a(href="/step/single_back") { div(title="Execute previous MIR statement/terminator (restarts and steps till one stmt before the current stmt)") { : "Step back (slow)" } }
                         a(href="/step/continue") { div(title="Run until termination or breakpoint") { : "Continue" } }
                         a(href="/step/restart") { div(title="Abort execution and restart") { : "Restart" } }
-                        a(href="/step/main") { div(title="Continue to the start of `main`") { : "-> Main" } }
+                        a(href="/step/main") { div(title="Continue to the start of `main`") { : "-> `main`" } }
                         a(href="/breakpoints/add_here") { div(title="Add breakpoint at current location") { : "Add breakpoint here"} }
                         a(href="/breakpoints/remove_all") { div(title="Remove all breakpoints") { : "Remove all breakpoints"} }
                     } else {
