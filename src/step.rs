@@ -244,11 +244,20 @@ fn parse_def_id(s: &str) -> Result<DefId, String> {
 
 pub mod step_routes {
     use rocket::response;
+    use rustc_hir::def_id::LOCAL_CRATE;
 
     use super::*;
 
     pub fn routes() -> Vec<::rocket::Route> {
-        routes![restart, single, single_back, next, return_, continue_]
+        routes![
+            restart,
+            single,
+            single_back,
+            next,
+            return_,
+            continue_,
+            continue_to_main
+        ]
     }
 
     #[get("/restart")]
@@ -272,6 +281,28 @@ pub mod step_routes {
             )
         })
     }
+
+    #[get("/main")]
+    fn continue_to_main(
+        sender: rocket::State<'_, crate::PrirodaSender>,
+    ) -> crate::RResult<response::Flash<response::Redirect>> {
+        sender.do_work(move |pcx| {
+            let main_id = pcx
+                .ecx
+                .tcx
+                .tcx
+                .entry_fn(LOCAL_CRATE)
+                .expect("no main or start function found")
+                .0
+                .to_def_id();
+            pcx.config
+                .bptree
+                .add_breakpoint(Breakpoint(main_id, mir::BasicBlock::new(0), 0));
+            let msg = step(pcx, |_ecx| ShouldContinue::Continue);
+            response::Flash::success(response::Redirect::to("/"), msg)
+        })
+    }
+
     #[get("/single_back")]
     fn single_back(
         sender: rocket::State<'_, crate::PrirodaSender>,
