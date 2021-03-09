@@ -39,6 +39,7 @@ use rocket::response::NamedFile;
 use rocket::State;
 
 use serde::Deserialize;
+use step::{step, ShouldContinue};
 
 use crate::step::BreakpointTree;
 
@@ -281,6 +282,27 @@ impl rustc_driver::Callbacks for PrirodaCompilerCalls {
 
             // Just ignore poisoning by panicking
             let receiver = self.receiver.lock().unwrap_or_else(|err| err.into_inner());
+
+            // At the very beginning, go to the start of
+            let main_id = pcx
+                .ecx
+                .tcx
+                .tcx
+                .entry_fn(LOCAL_CRATE)
+                .expect("no main or start function found")
+                .0
+                .to_def_id();
+
+            // Continue to main automatically
+            // TODO: Add ability to disable this
+            let _ = step(&mut pcx, |ecx| {
+                let frame = ecx.frame();
+                if main_id == frame.instance.def_id() {
+                    ShouldContinue::Stop
+                } else {
+                    ShouldContinue::Continue
+                }
+            });
 
             // process commands
             for command in receiver.iter() {
