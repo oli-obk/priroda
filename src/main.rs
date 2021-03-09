@@ -248,6 +248,7 @@ struct PrirodaCompilerCalls {
     config: Arc<Mutex<Config>>,
     receiver:
         Arc<Mutex<std::sync::mpsc::Receiver<Box<dyn FnOnce(&mut PrirodaContext<'_, '_>) + Send>>>>,
+    skip_to_main: bool,
 }
 
 impl rustc_driver::Callbacks for PrirodaCompilerCalls {
@@ -283,27 +284,26 @@ impl rustc_driver::Callbacks for PrirodaCompilerCalls {
             // Just ignore poisoning by panicking
             let receiver = self.receiver.lock().unwrap_or_else(|err| err.into_inner());
 
-            // At the very beginning, go to the start of
-            let main_id = pcx
-                .ecx
-                .tcx
-                .tcx
-                .entry_fn(LOCAL_CRATE)
-                .expect("no main or start function found")
-                .0
-                .to_def_id();
+            // At the very beginning, go to the start of main unless that is disabled
+            if self.skip_to_main {
+                let main_id = pcx
+                    .ecx
+                    .tcx
+                    .tcx
+                    .entry_fn(LOCAL_CRATE)
+                    .expect("no main or start function found")
+                    .0
+                    .to_def_id();
 
-            // Continue to main automatically
-            // TODO: Add ability to disable this
-            let _ = step(&mut pcx, |ecx| {
-                let frame = ecx.frame();
-                if main_id == frame.instance.def_id() {
-                    ShouldContinue::Stop
-                } else {
-                    ShouldContinue::Continue
-                }
-            });
-
+                let _ = step(&mut pcx, |ecx| {
+                    let frame = ecx.frame();
+                    if main_id == frame.instance.def_id() {
+                        ShouldContinue::Stop
+                    } else {
+                        ShouldContinue::Continue
+                    }
+                });
+            }
             // process commands
             for command in receiver.iter() {
                 command(&mut pcx);
@@ -320,12 +320,27 @@ fn main() {
     rustc_driver::init_rustc_env_logger();
     let mut args: Vec<String> = std::env::args().collect();
 
+    // TODO: Move to a 'proper' argument parser
+    // Maybe use xflags?
+
     let sysroot_flag = String::from("--sysroot");
     if !args.contains(&sysroot_flag) {
         args.push(sysroot_flag);
         args.push(find_sysroot());
     }
 
+    // Use the --no-main flag to stop
+    let stops_at_start = args
+        .iter()
+        .enumerate()
+        .find(|(_, v)| v.as_str() == "--no-main")
+        .map(|(i, _)| i);
+
+    if let Some(index) = stops_at_start {
+        // We pass these arguments to miri.
+        // This is the lowest-effort way to not pass our custom argument to miri
+        args.remove(index);
+    }
     // Eagerly initialise syntect static
     // Makes highlighting performance profiles clearer
     render::initialise_statics();
@@ -359,6 +374,7 @@ fn main() {
                             step_count,
                             config,
                             receiver,
+                            skip_to_main: stops_at_start.is_none(),
                         },
                     )
                     .run()
