@@ -33,3 +33,6 @@ cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "b65e460ee323b31
 
 [features]
 static_resources = []
+
+[package.metadata.rust-analyzer]
+rustc_private = true
