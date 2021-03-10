@@ -272,9 +272,11 @@ impl rustc_driver::Callbacks for PrirodaCompilerCalls {
                 traces: watch::Traces::new(),
                 config: &mut *config,
             };
-
+            // Whether we reset to the same place where miri crashed
+            let mut reset = false;
             // Step to the position where miri crashed if it crashed
             for _ in 0..*pcx.step_count {
+                reset = true;
                 match pcx.ecx.step() {
                     Ok(true) => {}
                     res => panic!("Miri is not deterministic causing error {:?}", res),
@@ -285,7 +287,7 @@ impl rustc_driver::Callbacks for PrirodaCompilerCalls {
             let receiver = self.receiver.lock().unwrap_or_else(|err| err.into_inner());
 
             // At the very beginning, go to the start of main unless that is disabled
-            if self.skip_to_main {
+            if !reset && self.skip_to_main {
                 let main_id = pcx
                     .ecx
                     .tcx
