@@ -25,6 +25,7 @@ use std::ops::FnOnce;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use miri::Evaluator;
 use rustc_driver::Compilation;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_interface::interface;
@@ -38,6 +39,7 @@ use rocket::response::NamedFile;
 use rocket::State;
 
 use serde::Deserialize;
+use step::{step, ShouldContinue};
 
 use crate::step::BreakpointTree;
 
@@ -49,13 +51,14 @@ fn should_hide_stmt(stmt: &mir::Statement<'_>) -> bool {
     }
 }
 
-type InterpCx<'tcx> = miri::MiriEvalContext<'tcx, 'tcx>;
+type InterpCx<'tcx> = rustc_mir::interpret::InterpCx<'tcx, 'tcx, Evaluator<'tcx, 'tcx>>;
 
 pub struct PrirodaContext<'a, 'tcx: 'a> {
     ecx: InterpCx<'tcx>,
     step_count: &'a mut u128,
     traces: watch::Traces<'tcx>,
     config: &'a mut Config,
+    skip_to_main: bool,
 }
 
 impl<'a, 'tcx: 'a> PrirodaContext<'a, 'tcx> {
@@ -63,6 +66,30 @@ impl<'a, 'tcx: 'a> PrirodaContext<'a, 'tcx> {
         self.ecx = create_ecx(self.ecx.tcx.tcx);
         *self.step_count = 0;
         self.traces.clear(); // Cleanup all traces
+        self.to_main();
+    }
+
+    // Step to main
+    fn to_main(&mut self) {
+        if self.skip_to_main {
+            let main_id = self
+                .ecx
+                .tcx
+                .tcx
+                .entry_fn(LOCAL_CRATE)
+                .expect("no main or start function found")
+                .0
+                .to_def_id();
+
+            let _ = step(self, |ecx| {
+                let frame = ecx.frame();
+                if main_id == frame.instance.def_id() {
+                    ShouldContinue::Stop
+                } else {
+                    ShouldContinue::Continue
+                }
+            });
+        }
     }
 }
 
@@ -241,9 +268,72 @@ fn find_sysroot() -> String {
     }
 }
 
+struct PrirodaCompilerCalls {
+    step_count: Arc<Mutex<u128>>,
+    config: Arc<Mutex<Config>>,
+    receiver:
+        Arc<Mutex<std::sync::mpsc::Receiver<Box<dyn FnOnce(&mut PrirodaContext<'_, '_>) + Send>>>>,
+    skip_to_main: bool,
+}
+
+impl rustc_driver::Callbacks for PrirodaCompilerCalls {
+    fn after_analysis<'tcx>(
+        &mut self,
+        compiler: &interface::Compiler,
+        queries: &'tcx rustc_interface::Queries<'tcx>,
+    ) -> Compilation {
+        compiler.session().abort_if_errors();
+
+        queries.global_ctxt().unwrap().peek_mut().enter(|tcx| {
+            let mut step_count = self
+                .step_count
+                .lock()
+                .unwrap_or_else(|err| err.into_inner());
+            let mut config = self.config.lock().unwrap_or_else(|err| err.into_inner());
+
+            let mut pcx = PrirodaContext {
+                ecx: create_ecx(tcx),
+                step_count: &mut *step_count,
+                traces: watch::Traces::new(),
+                config: &mut *config,
+                skip_to_main: self.skip_to_main,
+            };
+            // Whether we reset to the same place where miri crashed
+            let mut reset = false;
+            // Step to the position where miri crashed if it crashed
+            for _ in 0..*pcx.step_count {
+                reset = true;
+                match pcx.ecx.step() {
+                    Ok(true) => {}
+                    res => panic!("Miri is not deterministic causing error {:?}", res),
+                }
+            }
+
+            // Just ignore poisoning by panicking
+            let receiver = self.receiver.lock().unwrap_or_else(|err| err.into_inner());
+
+            // At the very beginning, go to the start of main unless we have already crashed and are trying to reset
+            if !reset {
+                pcx.to_main();
+            }
+            // process commands
+            for command in receiver.iter() {
+                command(&mut pcx);
+            }
+        });
+
+        compiler.session().abort_if_errors();
+
+        Compilation::Stop
+    }
+}
+
 fn main() {
     rustc_driver::init_rustc_env_logger();
     let mut args: Vec<String> = std::env::args().collect();
+
+    // TODO: Move to a 'proper' argument parser
+    // Maybe use xflags?
 
     let sysroot_flag = String::from("--sysroot");
     if !args.contains(&sysroot_flag) {
@@ -251,6 +341,18 @@ fn main() {
         args.push(find_sysroot());
     }
 
+    // Use the --no-main flag to stop
+    let stops_at_start = args
+        .iter()
+        .enumerate()
+        .find(|(_, v)| v.as_str() == "--no-main")
+        .map(|(i, _)| i);
+
+    if let Some(index) = stops_at_start {
+        // We pass these arguments to miri.
+        // This is the lowest-effort way to not pass our custom argument to miri
+        args.remove(index);
+    }
     // Eagerly initialise syntect static
     // Makes highlighting performance profiles clearer
     render::initialise_statics();
@@ -278,74 +380,13 @@ fn main() {
             // Ignore result to restart in case of a crash
             let _ = std::thread::spawn(move || {
                 let _ = rustc_driver::catch_fatal_errors(move || {
-                    struct PrirodaCompilerCalls {
-                        step_count: Arc<Mutex<u128>>,
-                        config: Arc<Mutex<Config>>,
-                        receiver: Arc<
-                            Mutex<
-                                std::sync::mpsc::Receiver<
-                                    Box<dyn FnOnce(&mut PrirodaContext<'_, '_>) + Send>,
-                                >,
-                            >,
-                        >,
-                    }
-
-                    impl rustc_driver::Callbacks for PrirodaCompilerCalls {
-                        fn after_analysis<'tcx>(
-                            &mut self,
-                            compiler: &interface::Compiler,
-                            queries: &'tcx rustc_interface::Queries<'tcx>,
-                        ) -> Compilation {
-                            compiler.session().abort_if_errors();
-
-                            queries.global_ctxt().unwrap().peek_mut().enter(|tcx| {
-                                let mut step_count = self
-                                    .step_count
-                                    .lock()
-                                    .unwrap_or_else(|err| err.into_inner());
-                                let mut config =
-                                    self.config.lock().unwrap_or_else(|err| err.into_inner());
-
-                                let mut pcx = PrirodaContext {
-                                    ecx: create_ecx(tcx),
-                                    step_count: &mut *step_count,
-                                    traces: watch::Traces::new(),
-                                    config: &mut *config,
-                                };
-
-                                // Step to the position where miri crashed if it crashed
-                                for _ in 0..*pcx.step_count {
-                                    match pcx.ecx.step() {
-                                        Ok(true) => {}
-                                        res => panic!(
-                                            "Miri is not deterministic causing error {:?}",
-                                            res
-                                        ),
-                                    }
-                                }
-
-                                // Just ignore poisoning by panicking
-                                let receiver =
-                                    self.receiver.lock().unwrap_or_else(|err| err.into_inner());
-
-                                // process commands
-                                for command in receiver.iter() {
-                                    command(&mut pcx);
-                                }
-                            });
-
-                            compiler.session().abort_if_errors();
-
-                            Compilation::Stop
-                        }
-                    }
-
                     rustc_driver::RunCompiler::new(
                         &*args,
                         &mut PrirodaCompilerCalls {
                             step_count,
                             config,
                             receiver,
+                            skip_to_main: stops_at_start.is_none(),
                         },
                     )
                     .run()
