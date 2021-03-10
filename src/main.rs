@@ -58,6 +58,7 @@ pub struct PrirodaContext<'a, 'tcx: 'a> {
     step_count: &'a mut u128,
     traces: watch::Traces<'tcx>,
     config: &'a mut Config,
+    skip_to_main: bool,
 }
 
 impl<'a, 'tcx: 'a> PrirodaContext<'a, 'tcx> {
@@ -65,6 +66,30 @@ impl<'a, 'tcx: 'a> PrirodaContext<'a, 'tcx> {
         self.ecx = create_ecx(self.ecx.tcx.tcx);
         *self.step_count = 0;
         self.traces.clear(); // Cleanup all traces
+        self.to_main();
+    }
+
+    // Step to main
+    fn to_main(&mut self) {
+        if self.skip_to_main {
+            let main_id = self
+                .ecx
+                .tcx
+                .tcx
+                .entry_fn(LOCAL_CRATE)
+                .expect("no main or start function found")
+                .0
+                .to_def_id();
+
+            let _ = step(self, |ecx| {
+                let frame = ecx.frame();
+                if main_id == frame.instance.def_id() {
+                    ShouldContinue::Stop
+                } else {
+                    ShouldContinue::Continue
+                }
+            });
+        }
     }
 }
 
@@ -271,6 +296,7 @@ impl rustc_driver::Callbacks for PrirodaCompilerCalls {
                 step_count: &mut *step_count,
                 traces: watch::Traces::new(),
                 config: &mut *config,
+                skip_to_main: self.skip_to_main,
             };
             // Whether we reset to the same place where miri crashed
             let mut reset = false;
@@ -286,25 +312,9 @@ impl rustc_driver::Callbacks for PrirodaCompilerCalls {
             // Just ignore poisoning by panicking
             let receiver = self.receiver.lock().unwrap_or_else(|err| err.into_inner());
 
-            // At the very beginning, go to the start of main unless that is disabled
-            if !reset && self.skip_to_main {
-                let main_id = pcx
-                    .ecx
-                    .tcx
-                    .tcx
-                    .entry_fn(LOCAL_CRATE)
-                    .expect("no main or start function found")
-                    .0
-                    .to_def_id();
-
-                let _ = step(&mut pcx, |ecx| {
-                    let frame = ecx.frame();
-                    if main_id == frame.instance.def_id() {
-                        ShouldContinue::Stop
-                    } else {
-                        ShouldContinue::Continue
-                    }
-                });
+            // At the very beginning, go to the start of main unless we have already crashed and are trying to reset
+            if !reset {
+                pcx.to_main();
             }
             // process commands
             for command in receiver.iter() {
