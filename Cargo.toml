@@ -13,7 +13,7 @@ regex = "1.3"
 lazy_static = "1.4.0"
 rocket = "0.4.7"
 # This needs to be the version of miri for the nightly in the `rust-toolchain` file
-miri = { git = "https://github.com/rust-lang/miri.git", rev = "ea86335318fd06ec964d9a86b187995bda1b6c7d" }
+miri = { git = "https://github.com/rust-lang/miri.git", rev = "ae964207bb17911cf96d9744d9469fa2734093a8" }
 
 log = "0.4"
 env_logger = "0.7"
@@ -25,7 +25,7 @@ open = "1.4.0"
 promising-future = "0.2"
 syntect = "4.2"
 horrorshow = "0.8"
-cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "b65e460ee323b31dca55b5541141a6b73272e72a" }
+cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "7348380f014fe87338cdcd4d2f22cbda771ae21d" }
 
 # Uncomment to use local checkout of miri
 # [patch."https://github.com/rust-lang/miri.git"]
