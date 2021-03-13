@@ -189,8 +189,11 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cgraph"
-version = "0.1.0"
-source = "git+https://github.com/oli-obk/cgraph.git?rev=b65e460ee323b31dca55b5541141a6b73272e72a#b65e460ee323b31dca55b5541141a6b73272e72a"
+version = "0.1.1"
+source = "git+https://github.com/oli-obk/cgraph.git?rev=7348380f014fe87338cdcd4d2f22cbda771ae21d#7348380f014fe87338cdcd4d2f22cbda771ae21d"
+dependencies = [
+ "pkg-config",
+]
 
 [[package]]
 name = "chrono"
@@ -560,7 +563,7 @@ dependencies = [
 [[package]]
 name = "miri"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/miri.git?rev=ea86335318fd06ec964d9a86b187995bda1b6c7d#ea86335318fd06ec964d9a86b187995bda1b6c7d"
+source = "git+https://github.com/rust-lang/miri.git?rev=ae964207bb17911cf96d9744d9469fa2734093a8#ae964207bb17911cf96d9744d9469fa2734093a8"
 dependencies = [
  "env_logger",
  "getrandom 0.2.2",
