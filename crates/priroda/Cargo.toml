@@ -1,0 +1,13 @@
+[package]
+name = "priroda"
+license = "MIT/Apache-2.0"
+description = "A graphical debugger for Rust MIR."
+repository = "https://github.com/oli-obk/priroda"
+version = "0.1.0"
+authors = ["Oliver Schneider <priroda-tsm-i-77ksi-11f77i@oli-obk.de>"]
+edition = "2018"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]

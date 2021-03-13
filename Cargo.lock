@@ -721,6 +721,10 @@ checksum = "ac74c624d6b2d21f425f752262f42188365d7b8ff1aff74c82e45136510a4857"
 [[package]]
 name = "priroda"
 version = "0.1.0"
+
+[[package]]
+name = "priroda_web"
+version = "0.1.0"
 dependencies = [
  "cgraph",
  "env_logger",
