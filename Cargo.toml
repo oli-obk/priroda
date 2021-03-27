@@ -36,3 +36,6 @@ static_resources = []
 
 [package.metadata.rust-analyzer]
 rustc_private = true
+
+[profile.dev]
+debug = 1
