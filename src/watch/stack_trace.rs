@@ -44,7 +44,6 @@ pub(super) fn step_callback(pcx: &mut PrirodaContext<'_, '_>) {
                     location_ty,
                 );
                 let instance = Instance::resolve_drop_in_place(ecx.tcx.tcx, location_ty);
-                println!("{:?}", instance);
                 insert_stack_traces_for_instance(pcx, stack_trace, instance, None);
             }
             _ => {}
