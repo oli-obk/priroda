@@ -22,10 +22,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 open = "1.4.0"
-promising-future = "0.2"
 syntect = "4.2"
 horrorshow = "0.8"
-cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "7348380f014fe87338cdcd4d2f22cbda771ae21d" }
+cgraph = { git = "https://github.com/oli-obk/cgraph.git", rev = "5e6a6d4527522609772a9a9a1565b74c9bfe1560" }
 
 # Uncomment to use local checkout of miri
 # [patch."https://github.com/rust-lang/miri.git"]
@@ -36,3 +35,6 @@ static_resources = []
 
 [package.metadata.rust-analyzer]
 rustc_private = true
+
+[profile.dev]
+debug = 1
