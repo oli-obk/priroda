@@ -23,6 +23,7 @@ mod watch;
 
 use std::ops::FnOnce;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use miri::Evaluator;
@@ -32,7 +33,6 @@ use rustc_interface::interface;
 use rustc_middle::mir;
 use rustc_middle::ty::TyCtxt;
 
-use promising_future::future_promise;
 use rocket::response::content::*;
 use rocket::response::status::BadRequest;
 use rocket::response::NamedFile;
@@ -163,14 +163,14 @@ impl PrirodaSender {
         T: rocket::response::Responder<'r> + Send + 'static,
         F: FnOnce(&mut PrirodaContext<'_, '_>) -> T + Send + 'static,
     {
-        let (future, promise) = future_promise();
+        let (tx, rx) = mpsc::sync_channel(0);
         let sender = self.0.lock().unwrap_or_else(|err| err.into_inner());
         match sender.send(Box::new(move |pcx: &mut PrirodaContext<'_, '_>| {
-            promise.set(f(pcx));
+            tx.send(f(pcx)).unwrap();
         })) {
-            Ok(()) => match future.value() {
-                Some(val) => Ok(val),
-                None => Err(Html(
+            Ok(()) => match rx.recv() {
+                Ok(val) => Ok(val),
+                Err(mpsc::RecvError) => Err(Html(
                     "<center><h1>Miri crashed please go to <a href='/'>index</a></h1></center>"
                         .to_string(),
                 )),
@@ -271,8 +271,7 @@ fn find_sysroot() -> String {
 struct PrirodaCompilerCalls {
     step_count: Arc<Mutex<u128>>,
     config: Arc<Mutex<Config>>,
-    receiver:
-        Arc<Mutex<std::sync::mpsc::Receiver<Box<dyn FnOnce(&mut PrirodaContext<'_, '_>) + Send>>>>,
+    receiver: Arc<Mutex<mpsc::Receiver<Box<dyn FnOnce(&mut PrirodaContext<'_, '_>) + Send>>>>,
     skip_to_main: bool,
 }
 
@@ -358,7 +357,7 @@ fn main() {
     render::initialise_statics();
 
     // setup http server and similar
-    let (sender, receiver) = std::sync::mpsc::channel();
+    let (sender, receiver) = mpsc::channel();
     let sender = PrirodaSender(Mutex::new(sender));
     let step_count = Arc::new(Mutex::new(0));
     let config = Arc::new(Mutex::new(Config::default()));
